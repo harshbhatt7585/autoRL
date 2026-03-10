@@ -20,6 +20,25 @@ class TrainHarnessTests(unittest.TestCase):
         self.assertEqual(result.max_steps, 20)
         self.assertIn("key-door", result.env_description.lower())
 
+    def test_budget_caps_are_enforced(self) -> None:
+        with self.assertRaisesRegex(ValueError, "at most 1000"):
+            evaluate_candidate(
+                train_episodes=1001,
+                eval_episodes=1,
+                seed_count=1,
+                num_envs=4,
+                device="cpu",
+            )
+
+        with self.assertRaisesRegex(ValueError, "at most 100"):
+            evaluate_candidate(
+                train_episodes=2,
+                eval_episodes=101,
+                seed_count=1,
+                num_envs=4,
+                device="cpu",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

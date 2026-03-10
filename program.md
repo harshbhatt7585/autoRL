@@ -10,7 +10,7 @@ To set up a new run, work with the user to:
 2. **Create the branch**: if the repo is under git, create `autorl/<tag>` from the current main line. If the repo is not under git, tell the human that git is strongly recommended before long runs.
 3. **Read the in-scope files**: the repo is small. Read these files for full context:
    - `README.md` — repository context.
-   - `framework.py` — fixed evaluator, fixed score, fixed budget. Do not modify.
+   - `framework.py` — fixed evaluator, fixed score, hard budget caps. Do not modify.
    - `train.py` — fixed entrypoint. Do not modify.
    - `candidate/env.py` — the candidate environment file you modify.
    - `candidate/train.py` — the env-specific policy and PPO tuning file you modify.
@@ -22,24 +22,44 @@ To set up a new run, work with the user to:
 
 ## Experimentation
 
-Each experiment runs with a **fixed evaluation budget**. You launch it simply as:
+Each experiment runs with an **agent-chosen episode budget**. You launch it as:
 
 ```bash
-.venv/bin/python train.py
+.venv/bin/python train.py --train-episodes <n> --eval-episodes <m>
 ```
 
-The default evaluator budget is fixed inside the repo:
+The evaluator has hard caps and fixed runtime settings:
 
-- `12` PPO training episodes
-- `8` greedy evaluation episodes
+- up to `1000` PPO training episodes
+- up to `100` greedy evaluation episodes
 - `2` random seeds
 - `32` parallel environments per seed
 - `cpu` by default
+
+**Budget policy**:
+
+- Start small. Use low episode counts for early exploration.
+- Raise the budget only when the current accepted candidate is clearly learning and you need more signal.
+- Never exceed the hard caps.
+- Do not vary `seed_count`, `num_envs`, or `max_steps`. The only budget knobs are `--train-episodes` and `--eval-episodes`.
+- Compare runs only against other runs at the same budget.
+- When you raise the budget, first re-run the current accepted candidate at the new budget and record that as the new baseline before testing new ideas.
+
+Useful example ladder:
+
+- `12/8`
+- `32/8`
+- `64/12`
+- `128/16`
+- `256/24`
+- `512/48`
+- `1000/100`
 
 **What you CAN do:**
 
 - Modify `candidate/env.py`.
 - Modify `candidate/train.py`.
+- Choose `--train-episodes` and `--eval-episodes` for each run, as long as they stay within the hard caps.
 - Change the task layout, reward structure, transition dynamics, observation encoding, action semantics, and episode logic.
 - Change the env-specific policy architecture and PPO hyperparameters used for that candidate environment.
 - Simplify or redesign the environment completely, as long as it still satisfies the interface expected by the fixed evaluator.
@@ -50,10 +70,11 @@ The default evaluator budget is fixed inside the repo:
 - Modify the root `train.py`.
 - Modify `vendor/simverse`.
 - Install new packages or add dependencies.
-- Change the evaluation budget.
+- Exceed the hard budget caps.
+- Change `seed_count`, `num_envs`, or `max_steps`.
 - Change the score definition.
 
-**The goal is simple: get the highest score.** Since the evaluator budget is fixed, you do not need to worry about making training longer. The only thing that matters is whether the candidate environment scores better under the same budget.
+**The goal is simple: get the highest score.** The budget is a search control knob, not a loophole. Spend as little budget as possible while ideas are weak, and only ratchet it upward when the accepted candidate has earned it. The only valid comparison is against the current accepted baseline at the same budget.
 
 **Single-agent constraint**: keep the search focused. The current evaluator expects a single-agent `SimEnv` with a discrete action space and a `C,H,W` observation tensor. Do not drift into multi-agent or continuous-control work unless the fixed evaluator is explicitly changed by the human.
 
@@ -78,7 +99,7 @@ The candidate training file must obey these constraints:
 
 - It may define the policy architecture for this environment.
 - It may tune optimizer and PPO hyperparameters for this environment.
-- It must not change the fixed evaluator budget.
+- It must not set the episode budget itself. The outer experiment loop controls `--train-episodes` and `--eval-episodes`.
 - It must not redefine the score.
 
 ## Output format
@@ -100,25 +121,27 @@ complexity_penalty: 0.400000
 The training log is noisy, so extract the key metrics from the log file:
 
 ```bash
-grep "^score:\|^mean_solve_rate:\|^mean_eval_return:" run.log
+grep "^score:\|^mean_solve_rate:\|^mean_eval_return:\|^train_episodes:\|^eval_episodes:" run.log
 ```
 
 ## Logging results
 
 When an experiment is done, log it to `results.tsv` as tab-separated text. Do not use commas.
 
-The TSV has a header row and 6 columns:
+The TSV has a header row and 8 columns:
 
 ```text
-commit	score	solve_rate	eval_return	status	description
+commit	train_episodes	eval_episodes	score	solve_rate	eval_return	status	description
 ```
 
 1. git commit hash, short form if git exists, otherwise `nogit`
-2. score achieved, for example `99.600000` — use `0.000000` for crashes
-3. solve rate achieved, for example `1.000000` — use `0.000000` for crashes
-4. eval return achieved, for example `1.865000` — use `0.000000` for crashes
-5. status: `keep`, `discard`, or `crash`
-6. short text description of what the experiment tried
+2. train episodes used, for example `128`
+3. eval episodes used, for example `16`
+4. score achieved, for example `99.600000` — use `0.000000` for crashes
+5. solve rate achieved, for example `1.000000` — use `0.000000` for crashes
+6. eval return achieved, for example `1.865000` — use `0.000000` for crashes
+7. status: `keep`, `discard`, or `crash`
+8. short text description of what the experiment tried
 
 Do not commit `results.tsv`. Leave it untracked.
 
@@ -128,17 +151,18 @@ The experiment runs on a dedicated branch, for example `autorl/mar10`.
 
 LOOP FOREVER:
 
-1. Look at the git state: current branch and current accepted commit.
-2. Tune `candidate/env.py`, `candidate/train.py`, or both with one experimental idea.
-3. Commit the experiment if git is available.
-4. Run the experiment: `.venv/bin/python train.py > run.log 2>&1`
-5. Read out the results: `grep "^score:\|^mean_solve_rate:\|^mean_eval_return:" run.log`
-6. If the grep output is empty, the run crashed. Read `tail -n 50 run.log`, decide whether the bug is easy to fix, and either retry or mark the idea as a crash.
-7. Record the result in `results.tsv`.
-8. If score improved, keep the change and advance from the new accepted commit.
-9. If score is equal or worse, restore the repo to the last accepted state and move on.
+1. Look at the git state: current branch, current accepted commit, and current accepted budget.
+2. Start with a small budget if this is a fresh run. If the accepted candidate is already strong at the current budget, ratchet upward and re-baseline the accepted commit first.
+3. Tune `candidate/env.py`, `candidate/train.py`, or both with one experimental idea.
+4. Commit the experiment if git is available.
+5. Run the experiment: `.venv/bin/python train.py --train-episodes <n> --eval-episodes <m> > run.log 2>&1`
+6. Read out the results: `grep "^score:\|^mean_solve_rate:\|^mean_eval_return:\|^train_episodes:\|^eval_episodes:" run.log`
+7. If the grep output is empty, the run crashed. Read `tail -n 50 run.log`, decide whether the bug is easy to fix, and either retry or mark the idea as a crash.
+8. Record the result in `results.tsv`, including the budget used.
+9. If score improved at the same budget, keep the change and advance from the new accepted commit.
+10. If score is equal or worse, restore the repo to the last accepted state and move on.
 
-The idea is simple: you are an autonomous environment researcher. If an idea works, keep it. If it does not, discard it. The accepted state moves forward only when the score improves.
+The idea is simple: you are an autonomous environment researcher. If an idea works, keep it. If it does not, discard it. The accepted state moves forward only when the score improves, and the accepted budget only moves upward.
 
 **Timeout**: each experiment should finish quickly. If a run hangs or takes far longer than normal for this machine, kill it and treat it as a failure.
 

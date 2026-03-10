@@ -2,15 +2,32 @@ from __future__ import annotations
 
 import argparse
 
-from framework import evaluate_candidate
+from framework import (
+    DEFAULT_EVAL_EPISODES,
+    DEFAULT_NUM_ENVS,
+    DEFAULT_TRAIN_EPISODES,
+    MAX_EVAL_EPISODES,
+    MAX_TRAIN_EPISODES,
+    evaluate_candidate,
+)
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Evaluate the current Simverse-backed autoRL candidate.")
-    parser.add_argument("--train-episodes", type=int, default=12)
-    parser.add_argument("--eval-episodes", type=int, default=8)
+    parser.add_argument(
+        "--train-episodes",
+        type=int,
+        default=DEFAULT_TRAIN_EPISODES,
+        help=f"PPO training episodes to run (2-{MAX_TRAIN_EPISODES}, default: {DEFAULT_TRAIN_EPISODES})",
+    )
+    parser.add_argument(
+        "--eval-episodes",
+        type=int,
+        default=DEFAULT_EVAL_EPISODES,
+        help=f"Greedy evaluation episodes to run (1-{MAX_EVAL_EPISODES}, default: {DEFAULT_EVAL_EPISODES})",
+    )
     parser.add_argument("--seed-count", type=int, default=2)
-    parser.add_argument("--num-envs", type=int, default=32)
+    parser.add_argument("--num-envs", type=int, default=DEFAULT_NUM_ENVS)
     parser.add_argument("--device", choices=("auto", "cpu", "mps", "cuda"), default="cpu")
     return parser.parse_args()
 

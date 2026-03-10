@@ -40,6 +40,8 @@ DEFAULT_NUM_ENVS = 32
 DEFAULT_MAX_STEPS = 20
 DEFAULT_TRAIN_EPISODES = 12
 DEFAULT_EVAL_EPISODES = 8
+MAX_TRAIN_EPISODES = 1000
+MAX_EVAL_EPISODES = 100
 DEFAULT_SEED_COUNT = 2
 DEFAULT_LR = 3e-4
 ALLOWED_TRAINING_OVERRIDE_KEYS = {
@@ -418,8 +420,12 @@ def evaluate_candidate(
 ) -> EvaluationResult:
     if train_episodes < 2:
         raise ValueError("train_episodes must be at least 2.")
+    if train_episodes > MAX_TRAIN_EPISODES:
+        raise ValueError(f"train_episodes must be at most {MAX_TRAIN_EPISODES}.")
     if eval_episodes < 1:
         raise ValueError("eval_episodes must be at least 1.")
+    if eval_episodes > MAX_EVAL_EPISODES:
+        raise ValueError(f"eval_episodes must be at most {MAX_EVAL_EPISODES}.")
     if seed_count < 1:
         raise ValueError("seed_count must be at least 1.")
     if num_envs < 1:

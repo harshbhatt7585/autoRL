@@ -1,29 +1,15 @@
 # autoRL
 
-This repo is a minimal adaptation of Andrej Karpathy's
-[`autoresearch`](https://github.com/karpathy/autoresearch) pattern for RL
-environment invention, backed by a vendored copy of
-[`simverse`](https://github.com/harshbhatt7585/simverse).
+This repo is for autonomous search over RL environments backed by a vendored
+copy of [`simverse`](https://github.com/harshbhatt7585/simverse).
 
-## What matters from `autoresearch`
-
-The important design choice in Karpathy's repo is not "let the agent touch the
-whole project". It is the opposite:
+## Design principles
 
 - keep the evaluator fixed
-- keep the time budget fixed
+- keep the score fixed
 - keep the mutable surface area tiny
-- compare every run on the same metric
-
-In the original repo, the agent edits `train.py` while `prepare.py` and the
-metric stay fixed. For RL environment generation, the cleanest analogue is:
-
-- `candidate/env.py` and `candidate/train.py` are the mutable candidate surface
-- `framework.py` contains the fixed Simverse PPO evaluator and score
-- root `train.py` evaluates the current candidate with a fixed budget
-
-If you let the agent mutate both the environment and the evaluator at the same
-time, scores drift and experiments stop being comparable.
+- let the outer agent choose episode budget within hard caps
+- keep the rest of the runtime stable enough that results stay interpretable
 
 ## Repo layout
 
@@ -36,13 +22,13 @@ time, scores drift and experiments stop being comparable.
 
 ## Scoring philosophy
 
-The score is intentionally not just "final reward". It combines:
+The evaluator reports greedy evaluation return, but the score itself combines:
 
 - greedy solve rate after PPO training
-- greedy evaluation return
 - training gain from early episodes to late episodes
 - headroom bonus, which penalizes trivial untrained policies
 - stability across seeds
+- normalized late-stage training return
 - a small penalty for oversized observation and action spaces
 
 This pushes the agent toward environments that are solvable, learnable, and not
@@ -63,12 +49,19 @@ Run the fixed evaluator through that virtualenv:
 .venv/bin/python train.py
 ```
 
-The default evaluation budget is intentionally small:
+The evaluator starts with small defaults but allows budget growth up to hard
+caps:
 
-- `12` PPO training episodes
-- `8` greedy eval episodes
+- default `12` PPO training episodes
+- default `8` greedy eval episodes
+- hard cap `1000` PPO training episodes
+- hard cap `100` greedy eval episodes
 - `2` random seeds
 - `32` parallel environments per seed
+
+The intended workflow is to explore with small `--train-episodes` and
+`--eval-episodes`, then ratchet them upward as the candidate gets stronger. The
+rest of the evaluator should stay the same.
 
 For an autonomous loop, initialize git first so the agent can keep or discard
 environment mutations cleanly:
