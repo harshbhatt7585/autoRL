@@ -21,7 +21,7 @@ HISTORY_WINDOW = OBS_WIDTH
 INITIAL_CASH = 500.0
 PRICE_SCALE = 40.0
 TRADE_PENALTY = 0.0000
-FLIP_PENALTY = 0.0011
+FLIP_PENALTY = 0.0005
 INVALID_ACTION_PENALTY = 0.0100
 DENSE_REWARD_CLIP = 0.0800
 TERMINAL_REWARD_CLIP = 0.6000
@@ -294,47 +294,47 @@ class TradingEnv(SimEnv):
         noise = torch.randn(self.series_length, generator=generator, dtype=torch.float32)
 
         if company_id == 0:
-            base = 18.8 + (0.24 * drift * t) + (1.0 * amplitude * torch.sin((t / 8.0) + phase))
-            price = base + (0.22 * noise)
+            base = 14.6 + (0.24 * drift * t) + (0.85 * amplitude * torch.sin((t / 8.6) + phase))
+            price = base + (0.18 * noise)
         elif company_id == 1:
             price = torch.empty(self.series_length, dtype=torch.float32)
             family_phase = (0.30 * math.pi) + (0.45 * phase_jitter)
-            mean_level = 24.4
-            family_amplitude = 0.92 + (0.14 * amplitude)
-            family_drift = 0.94 + (0.10 * drift)
-            price[0] = mean_level - 0.5 + (0.35 * float(torch.randn((), generator=generator).item()))
+            mean_level = 18.8
+            family_amplitude = 0.98 + (0.16 * amplitude)
+            family_drift = 0.98 + (0.12 * drift)
+            price[0] = mean_level - 0.4 + (0.28 * float(torch.randn((), generator=generator).item()))
             for index in range(1, self.series_length):
-                anchor = mean_level + (0.040 * family_drift * index)
-                anchor += 2.2 * family_amplitude * math.sin((index / 7.2) + family_phase)
-                reversion = 0.48 * (anchor - float(price[index - 1].item()))
-                shock = 0.16 * float(noise[index].item())
+                anchor = mean_level + (0.052 * family_drift * index)
+                anchor += 2.6 * family_amplitude * math.sin((index / 7.0) + family_phase)
+                reversion = 0.54 * (anchor - float(price[index - 1].item()))
+                shock = 0.12 * float(noise[index].item())
                 price[index] = max(8.0, float(price[index - 1].item()) + reversion + shock)
             return price.clamp(min=6.0, max=80.0)
         elif company_id == 2:
             boom_shift = 1.5 * phase_jitter
-            surge = 24.5 / (1.0 + torch.exp(-((t - (24.0 + boom_shift)) / 3.8)))
-            fade = 23.5 / (1.0 + torch.exp(-((t - (58.0 + boom_shift)) / 4.2)))
-            crest = 3.6 * torch.exp(-((t - (42.0 + boom_shift)) / 6.4) ** 2)
-            base = 16.0 + surge - fade + crest
-            base += 0.35 * amplitude * torch.sin((t / 6.2) + (0.20 * phase_jitter))
-            price = base + (0.18 * noise)
+            surge = 25.0 / (1.0 + torch.exp(-((t - (22.0 + boom_shift)) / 3.5)))
+            fade = 22.5 / (1.0 + torch.exp(-((t - (61.0 + boom_shift)) / 4.5)))
+            crest = 4.8 * torch.exp(-((t - (43.0 + boom_shift)) / 6.0) ** 2)
+            base = 12.6 + surge - fade + crest
+            base += 0.22 * amplitude * torch.sin((t / 6.4) + (0.20 * phase_jitter))
+            price = base + (0.14 * noise)
         elif company_id == 3:
             cycle_phase = (0.72 * math.pi) + (0.30 * phase_jitter)
-            family_amplitude = 0.94 + (0.12 * amplitude)
-            family_drift = 0.94 + (0.10 * drift)
-            base = 22.6 + (0.036 * family_drift * t)
-            base += 6.8 * family_amplitude * torch.sin((t / 9.2) + cycle_phase)
-            base += 2.2 * torch.sin((t / 18.5) + (0.4 * cycle_phase))
-            price = base + (0.16 * noise)
+            family_amplitude = 0.98 + (0.14 * amplitude)
+            family_drift = 0.98 + (0.12 * drift)
+            base = 17.6 + (0.042 * family_drift * t)
+            base += 7.4 * family_amplitude * torch.sin((t / 9.4) + cycle_phase)
+            base += 2.4 * torch.sin((t / 18.8) + (0.4 * cycle_phase))
+            price = base + (0.14 * noise)
         else:
-            trap_shift = 3.0 * phase_jitter
-            fakeouts = 1.4 * amplitude * torch.sin((t / 4.9) + (0.25 * math.pi) + (0.40 * phase_jitter))
-            fakeouts += 0.6 * torch.sin((t / 2.2) + (0.20 * phase_jitter))
-            traps = 2.7 * torch.exp(-((t - (33.0 + trap_shift)) / 5.8) ** 2)
-            traps -= 3.8 * torch.exp(-((t - (58.0 + trap_shift)) / 7.0) ** 2)
-            traps += 2.0 * torch.exp(-((t - (82.0 + trap_shift)) / 5.0) ** 2)
-            base = 28.1 - (0.018 * drift * t) + fakeouts + traps
-            price = base + (0.18 * noise)
+            trap_shift = 2.6 * phase_jitter
+            fakeouts = 1.1 * amplitude * torch.sin((t / 5.0) + (0.25 * math.pi) + (0.40 * phase_jitter))
+            fakeouts += 0.45 * torch.sin((t / 2.3) + (0.18 * phase_jitter))
+            traps = 1.9 * torch.exp(-((t - (34.0 + trap_shift)) / 5.6) ** 2)
+            traps -= 3.0 * torch.exp(-((t - (58.0 + trap_shift)) / 6.8) ** 2)
+            traps += 2.8 * torch.exp(-((t - (85.0 + trap_shift)) / 5.2) ** 2)
+            base = 20.2 - (0.010 * drift * t) + fakeouts + traps
+            price = base + (0.14 * noise)
 
         smoothed = price.clone()
         for index in range(1, self.series_length):
