@@ -13,9 +13,9 @@ SUMMARY_HIDDEN = 32
 HIDDEN_DIM = 128
 TRAINING_EPOCHS = 8
 LEARNING_RATE = 3e-4
-ENTROPY_COEF = 0.0004
+ENTROPY_COEF = 0.001
 GAMMA = 0.99
-GAE_LAMBDA = 0.96
+GAE_LAMBDA = 0.95
 CLIP_EPSILON = 0.12
 MAX_GRAD_NORM = 0.8
 
@@ -103,7 +103,7 @@ def training_overrides(*, num_envs: int, max_steps: int, device: str) -> dict[st
         "max_steps": resolved_max_steps,
         "training_epochs": TRAINING_EPOCHS,
         "lr": LEARNING_RATE,
-        "batch_size": max(512, num_envs * 16),
+        "batch_size": max(256, num_envs * 8),
         "buffer_size": max(num_envs * resolved_max_steps, 2048),
         "entropy_coef": ENTROPY_COEF,
         "gamma": GAMMA,
