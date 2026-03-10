@@ -13,7 +13,7 @@ copy of [`simverse`](https://github.com/harshbhatt7585/simverse).
 
 ## Repo layout
 
-- `candidate/env.py`: the editable `SimEnv` candidate
+- `candidate/env.py`: the editable `SimEnv` candidate, currently an intentionally empty starter canvas
 - `candidate/train.py`: env-specific policy and PPO hyperparameters
 - `framework.py`: fixed Simverse PPO evaluator and score
 - `train.py`: fixed CLI entrypoint that prints comparable metrics
@@ -63,6 +63,10 @@ The intended workflow is to explore with small `--train-episodes` and
 `--eval-episodes`, then ratchet them upward as the candidate gets stronger. The
 rest of the evaluator should stay the same.
 
+The checked-in candidate environment is intentionally minimal. The actual task
+the agent should build belongs in `program.md`, not hardcoded in the baseline
+starter env.
+
 For an autonomous loop, initialize git first so the agent can keep or discard
 environment mutations cleanly:
 
@@ -79,6 +83,6 @@ Then point your coding agent at `program.md`.
 This scaffold is intentionally small. The next useful upgrades are:
 
 1. Promote the candidate into a full `simverse.envs.autorl_candidate` package.
-2. Add a novelty archive so repeated key-door variants are penalized.
+2. Add a novelty archive so repeated near-duplicate task variants are penalized.
 3. Emit replay JSON to the shared Simverse renderer for failure inspection.
 4. Split search into proposer and judge agents once the single-agent loop is stable.

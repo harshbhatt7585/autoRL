@@ -16,9 +16,9 @@ class TrainHarnessTests(unittest.TestCase):
         )
         self.assertGreaterEqual(result.score, 0.0)
         self.assertEqual(result.num_actions, 4)
-        self.assertEqual(result.observation_shape, (7, 5, 5))
+        self.assertEqual(result.observation_shape, (1, 5, 5))
         self.assertEqual(result.max_steps, 20)
-        self.assertIn("key-door", result.env_description.lower())
+        self.assertIn("empty", result.env_description.lower())
 
     def test_budget_caps_are_enforced(self) -> None:
         with self.assertRaisesRegex(ValueError, "at most 1000"):

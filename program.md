@@ -20,6 +20,20 @@ To set up a new run, work with the user to:
 5. **Initialize `results.tsv`**: create it with just the header row if needed. The baseline will be recorded after the first run.
 6. **Confirm and go**: once setup looks good, kick off the experimentation.
 
+## Build brief
+
+Write the target environment brief here before starting a long run.
+
+- `Task:` fill in the environment the agent should build.
+- `Core loop:` fill in the player or policy behavior you want the task to reward.
+- `Required mechanics:` list the mechanics that must exist.
+- `Success condition:` define what counts as solving the task.
+- `Constraints:` note any limits on size, horizon, action count, observation design, or style.
+
+The current `candidate/env.py` is intentionally an empty starter canvas. It is
+not the task. The first real job is to replace it with an environment that
+matches this brief.
+
 ## Experimentation
 
 Each experiment runs with an **agent-chosen episode budget**. You launch it as:
@@ -80,7 +94,7 @@ Useful example ladder:
 
 **Simplicity criterion**: all else equal, simpler is better. A tiny score improvement that adds ugly complexity is not worth it. Conversely, deleting mechanics and getting the same or better score is a strong win. When deciding whether to keep a change, weigh the complexity cost against the score gain. Small hacky gains are weak. Cleaner env logic with equal performance is strong.
 
-**The first run**: your very first run should always be the baseline, so you run the current `candidate/env.py` and `candidate/train.py` exactly as they are.
+**The first run**: your very first run should always be the baseline, so you run the current `candidate/env.py` and `candidate/train.py` exactly as they are. Right now that baseline is just an empty starter canvas. After recording it, start building the environment described in the build brief above.
 
 ## Environment contract
 
