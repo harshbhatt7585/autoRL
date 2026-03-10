@@ -9,6 +9,7 @@ TASK_MAX_STEPS = 100
 TEMPORAL_CHANNELS = 32
 TEMPORAL_HIDDEN = 48
 SCALAR_HIDDEN = 32
+SUMMARY_HIDDEN = 32
 HIDDEN_DIM = 128
 TRAINING_EPOCHS = 8
 LEARNING_RATE = 3e-4
@@ -43,8 +44,14 @@ class TradingPolicy(nn.Module):
             nn.Linear(SCALAR_HIDDEN, SCALAR_HIDDEN),
             nn.Tanh(),
         )
+        self.summary_encoder = nn.Sequential(
+            nn.Linear(8, SUMMARY_HIDDEN),
+            nn.Tanh(),
+            nn.Linear(SUMMARY_HIDDEN, SUMMARY_HIDDEN),
+            nn.Tanh(),
+        )
         self.trunk = nn.Sequential(
-            nn.Linear(HIDDEN_DIM + SCALAR_HIDDEN, HIDDEN_DIM),
+            nn.Linear(HIDDEN_DIM + SCALAR_HIDDEN + SUMMARY_HIDDEN, HIDDEN_DIM),
             nn.Tanh(),
             nn.Linear(HIDDEN_DIM, HIDDEN_DIM),
             nn.Tanh(),
@@ -62,10 +69,26 @@ class TradingPolicy(nn.Module):
             obs = obs.to(device=target.device, dtype=target.dtype)
 
         temporal = obs[:, :2].reshape(obs.shape[0], 2, -1)
+        price_history = temporal[:, 0]
+        return_history = temporal[:, 1]
         scalars = obs[:, 2:, 0, 0]
+        summary = torch.stack(
+            (
+                price_history[:, -4:].mean(dim=-1),
+                price_history[:, -12:].mean(dim=-1),
+                price_history.mean(dim=-1),
+                return_history[:, -4:].mean(dim=-1),
+                return_history[:, -12:].mean(dim=-1),
+                return_history[:, -12:].abs().mean(dim=-1),
+                price_history.max(dim=-1).values,
+                price_history.min(dim=-1).values,
+            ),
+            dim=-1,
+        )
         encoded_history = self.history_head(self.temporal_encoder(temporal))
         encoded_scalars = self.scalar_encoder(scalars)
-        encoded = self.trunk(torch.cat((encoded_history, encoded_scalars), dim=-1))
+        encoded_summary = self.summary_encoder(summary)
+        encoded = self.trunk(torch.cat((encoded_history, encoded_scalars, encoded_summary), dim=-1))
         return self.action_head(encoded), self.value_head(encoded)
 
 
