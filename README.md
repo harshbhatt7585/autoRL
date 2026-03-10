@@ -48,6 +48,10 @@ Run the fixed evaluator through that virtualenv:
 .venv/bin/python train.py
 ```
 
+Each run appends a summary row to `results.tsv`. You can also pass
+`--description "..."` and optionally `--status pending|keep|discard` to label
+that row.
+
 The evaluator starts with small defaults but allows budget growth up to hard
 caps:
 

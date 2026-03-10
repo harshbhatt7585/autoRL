@@ -321,7 +321,13 @@ grep "^score:\|^mean_solve_rate:\|^mean_eval_return:\|^train_episodes:\|^eval_ep
 
 ## Logging results
 
-When an experiment is done, log it to `results.tsv` as tab-separated text. Do not use commas.
+`train.py` now auto-appends one row to `results.tsv` for each completed run.
+Successful runs default to `status=pending`. If you pass `--status keep` or
+`--status discard`, that label is written instead. If evaluation crashes after
+argument parsing, `train.py` appends a `crash` row with zero metrics.
+
+You may also pass `--description "<idea>"` so the row records what the
+experiment tried. Do not use commas in the TSV itself.
 
 The TSV has a header row and 9 columns:
 
@@ -336,7 +342,7 @@ commit	train_episodes	eval_episodes	max_steps	score	solve_rate	eval_return	statu
 5. score achieved, for example `1.865000` — use `0.000000` for crashes
 6. solve rate achieved, for example `1.000000` — use `0.000000` for crashes
 7. eval return achieved, for example `1.865000` — use `0.000000` for crashes
-8. status: `keep`, `discard`, or `crash`
+8. status: `pending`, `keep`, `discard`, or `crash`
 9. short text description of what the experiment tried
 
 Do not commit `results.tsv`. Leave it untracked.
@@ -351,10 +357,10 @@ LOOP FOREVER:
 2. Start with a small budget if this is a fresh run. If the accepted candidate is already strong at the current budget, ratchet upward and re-baseline the accepted commit first.
 3. Tune `candidate/env.py`, `candidate/train.py`, or both with one experimental idea.
 4. Commit the experiment if git is available.
-5. Run the experiment: `.venv/bin/python train.py --train-episodes <n> --eval-episodes <m> > run.log 2>&1`
+5. Run the experiment: `.venv/bin/python train.py --train-episodes <n> --eval-episodes <m> --description "<idea>" > run.log 2>&1`
 6. Read out the results: `grep "^score:\|^mean_solve_rate:\|^mean_eval_return:\|^train_episodes:\|^eval_episodes:\|^max_steps:" run.log`
 7. If the grep output is empty, the run crashed. Read `tail -n 50 run.log`, decide whether the bug is easy to fix, and either retry or mark the idea as a crash.
-8. Record the result in `results.tsv`, including the budget used.
+8. Confirm the row was written to `results.tsv`, then update its status to `keep` or `discard` if needed.
 9. If score improved at the same budget, keep the change and advance from the new accepted commit.
 10. If score is equal or worse, restore the repo to the last accepted state and move on.
 
