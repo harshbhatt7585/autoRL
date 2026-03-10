@@ -30,20 +30,17 @@ implement it cleanly, and optimize it.
 The two families below are the human-authored target tasks. Treat them as the
 source of truth for what the next real environment should be.
 
-## Current harness reality
+## Episode horizon
 
-There is an important mismatch between the target task briefs and the current
-fixed evaluator:
+The fixed evaluator now reads the task horizon from `candidate/train.py`
+through `training_overrides()["max_steps"]`.
 
-- `framework.py` still hardcodes `max_steps = 20`.
-- The score also penalizes longer episodes through the complexity penalty.
-- Because of that, the exact requested horizons below (`100` trading hours and
-  `1000` household steps) are not currently faithful to the fixed evaluator.
-
-Do not silently ignore this. The briefs below are still the correct product
-specs, but they are not yet a perfect fit for the current scorer. If the human
-later asks for a faithful implementation, note that the evaluator contract must
-also be updated. Do not pretend a compressed `20`-step proxy is the same thing.
+- The environment owns its semantic episode length.
+- The outer harness still owns `--train-episodes` and `--eval-episodes`.
+- Do not treat `max_steps` as a free optimization knob. It must faithfully match
+  the chosen task brief.
+- Do not compress a `100`-hour trading task or a `1000`-step household task
+  down to a tiny proxy just to make the score easier.
 
 ## Experimentation
 
@@ -66,7 +63,8 @@ The evaluator has hard caps and fixed runtime settings:
 - Start small. Use low episode counts for early exploration.
 - Raise the budget only when the current accepted candidate is clearly learning and you need more signal.
 - Never exceed the hard caps.
-- Do not vary `seed_count`, `num_envs`, or `max_steps`. The only budget knobs are `--train-episodes` and `--eval-episodes`.
+- Do not vary `seed_count` or `num_envs`. The only budget knobs are `--train-episodes` and `--eval-episodes`.
+- `max_steps` belongs to the candidate hyperparameter constants in `candidate/train.py`, not the outer experiment loop.
 - Compare runs only against other runs at the same budget.
 - When you raise the budget, first re-run the current accepted candidate at the new budget and record that as the new baseline before testing new ideas.
 
@@ -96,7 +94,8 @@ Useful example ladder:
 - Modify `vendor/simverse`.
 - Install new packages or add dependencies.
 - Exceed the hard budget caps.
-- Change `seed_count`, `num_envs`, or `max_steps`.
+- Change `seed_count` or `num_envs`.
+- Use a fake shortened `max_steps` that violates the chosen task brief.
 - Change the score definition.
 
 **The goal is simple: get the highest score.** The budget is a search control knob, not a loophole. Spend as little budget as possible while ideas are weak, and only ratchet it upward when the accepted candidate has earned it. The only valid comparison is against the current accepted baseline at the same budget.
@@ -281,12 +280,13 @@ The candidate environment must obey these constraints:
 - `step(action)` returns `(obs_dict, reward, done, info)` compatible with the Simverse PPO trainer.
 - `info["success"]` must be an env-level boolean signal so solve rate is meaningful.
 - Rewards should stay finite and roughly within `[-1.0, 1.0]`.
-- Episodes must terminate within `config.max_steps`.
+- Episodes must terminate within `config.max_steps`, and that value must match the intended task horizon declared through `training_overrides()["max_steps"]`.
 
 The candidate training file must obey these constraints:
 
 - It may define the policy architecture for this environment.
 - It may tune optimizer and PPO hyperparameters for this environment.
+- It may define task-level hyperparameter constants such as `max_steps` through `training_overrides()`.
 - It must not set the episode budget itself. The outer experiment loop controls `--train-episodes` and `--eval-episodes`.
 - It must not redefine the score.
 
@@ -309,27 +309,28 @@ complexity_penalty: 0.400000
 The training log is noisy, so extract the key metrics from the log file:
 
 ```bash
-grep "^score:\|^mean_solve_rate:\|^mean_eval_return:\|^train_episodes:\|^eval_episodes:" run.log
+grep "^score:\|^mean_solve_rate:\|^mean_eval_return:\|^train_episodes:\|^eval_episodes:\|^max_steps:" run.log
 ```
 
 ## Logging results
 
 When an experiment is done, log it to `results.tsv` as tab-separated text. Do not use commas.
 
-The TSV has a header row and 8 columns:
+The TSV has a header row and 9 columns:
 
 ```text
-commit	train_episodes	eval_episodes	score	solve_rate	eval_return	status	description
+commit	train_episodes	eval_episodes	max_steps	score	solve_rate	eval_return	status	description
 ```
 
 1. git commit hash, short form if git exists, otherwise `nogit`
 2. train episodes used, for example `128`
 3. eval episodes used, for example `16`
-4. score achieved, for example `99.600000` — use `0.000000` for crashes
-5. solve rate achieved, for example `1.000000` — use `0.000000` for crashes
-6. eval return achieved, for example `1.865000` — use `0.000000` for crashes
-7. status: `keep`, `discard`, or `crash`
-8. short text description of what the experiment tried
+4. task horizon from `max_steps`, for example `100`
+5. score achieved, for example `99.600000` — use `0.000000` for crashes
+6. solve rate achieved, for example `1.000000` — use `0.000000` for crashes
+7. eval return achieved, for example `1.865000` — use `0.000000` for crashes
+8. status: `keep`, `discard`, or `crash`
+9. short text description of what the experiment tried
 
 Do not commit `results.tsv`. Leave it untracked.
 
@@ -344,7 +345,7 @@ LOOP FOREVER:
 3. Tune `candidate/env.py`, `candidate/train.py`, or both with one experimental idea.
 4. Commit the experiment if git is available.
 5. Run the experiment: `.venv/bin/python train.py --train-episodes <n> --eval-episodes <m> > run.log 2>&1`
-6. Read out the results: `grep "^score:\|^mean_solve_rate:\|^mean_eval_return:\|^train_episodes:\|^eval_episodes:" run.log`
+6. Read out the results: `grep "^score:\|^mean_solve_rate:\|^mean_eval_return:\|^train_episodes:\|^eval_episodes:\|^max_steps:" run.log`
 7. If the grep output is empty, the run crashed. Read `tail -n 50 run.log`, decide whether the bug is easy to fix, and either retry or mark the idea as a crash.
 8. Record the result in `results.tsv`, including the budget used.
 9. If score improved at the same budget, keep the change and advance from the new accepted commit.

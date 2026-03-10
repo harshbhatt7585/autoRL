@@ -32,7 +32,8 @@ The evaluator reports greedy evaluation return, but the score itself combines:
 - a small penalty for oversized observation and action spaces
 
 This pushes the agent toward environments that are solvable, learnable, and not
-completely trivial.
+completely trivial. Longer task horizons are not directly penalized just for
+being longer.
 
 ## Quick start
 
@@ -62,6 +63,11 @@ caps:
 The intended workflow is to explore with small `--train-episodes` and
 `--eval-episodes`, then ratchet them upward as the candidate gets stronger. The
 rest of the evaluator should stay the same.
+
+Task horizon is defined through the candidate hyperparameter surface in
+`candidate/train.py` via `training_overrides()["max_steps"]`. The outer CLI
+still controls only the number of PPO training episodes and greedy evaluation
+episodes.
 
 The checked-in candidate environment is intentionally minimal. The actual task
 the agent should build belongs in `program.md`, not hardcoded in the baseline

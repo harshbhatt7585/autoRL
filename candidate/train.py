@@ -6,21 +6,26 @@ from typing import Any
 import torch
 import torch.nn as nn
 
+TASK_MAX_STEPS = 20
+HIDDEN_DIM = 128
+TRAINING_EPOCHS = 2
+LEARNING_RATE = 3e-4
+ENTROPY_COEF = 0.01
+
 
 class TinyGridPolicy(nn.Module):
     def __init__(self, obs_space: Any, action_space: Any) -> None:
         super().__init__()
         input_dim = math.prod(obs_space.shape)
-        hidden_dim = 128
         self.encoder = nn.Sequential(
             nn.Flatten(),
-            nn.Linear(input_dim, hidden_dim),
+            nn.Linear(input_dim, HIDDEN_DIM),
             nn.Tanh(),
-            nn.Linear(hidden_dim, hidden_dim),
+            nn.Linear(HIDDEN_DIM, HIDDEN_DIM),
             nn.Tanh(),
         )
-        self.action_head = nn.Linear(hidden_dim, action_space.n)
-        self.value_head = nn.Linear(hidden_dim, 1)
+        self.action_head = nn.Linear(HIDDEN_DIM, action_space.n)
+        self.value_head = nn.Linear(HIDDEN_DIM, 1)
 
     def forward(self, obs: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         if obs.dim() == 3:
@@ -37,13 +42,15 @@ def build_policy(obs_space: Any, action_space: Any) -> nn.Module:
 
 
 def training_overrides(*, num_envs: int, max_steps: int, device: str) -> dict[str, Any]:
-    del device
+    del device, max_steps
+    resolved_max_steps = TASK_MAX_STEPS
     return {
-        "training_epochs": 2,
-        "lr": 3e-4,
+        "max_steps": resolved_max_steps,
+        "training_epochs": TRAINING_EPOCHS,
+        "lr": LEARNING_RATE,
         "batch_size": max(32, num_envs * 4),
-        "buffer_size": max(num_envs * max_steps, 256),
-        "entropy_coef": 0.01,
+        "buffer_size": max(num_envs * resolved_max_steps, 256),
+        "entropy_coef": ENTROPY_COEF,
         "normalize_advantages": True,
         "torch_fastpath": True,
     }

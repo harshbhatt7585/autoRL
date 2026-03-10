@@ -17,7 +17,7 @@ try:
     import numpy as np
     import torch
     import torch.nn as nn
-    from candidate.env import create_env
+    from candidate import env as candidate_env_module
     from candidate.train import build_policy, training_overrides
     from simverse.core.agent import SimAgent
     from simverse.core.simulator import Simulator
@@ -56,6 +56,7 @@ ALLOWED_TRAINING_OVERRIDE_KEYS = {
     "normalize_advantages",
     "torch_fastpath",
     "training_epochs",
+    "max_steps",
 }
 
 
@@ -176,7 +177,6 @@ def _complexity_penalty(
     observation_shape: tuple[int, ...],
     *,
     num_actions: int,
-    max_steps: int,
 ) -> float:
     if len(observation_shape) != 3:
         return 5.0
@@ -184,8 +184,7 @@ def _complexity_penalty(
     spatial_penalty = max(0, (height * width) - 25) * 0.08
     channel_penalty = max(0, channels - 6) * 0.40
     action_penalty = max(0, num_actions - 5) * 1.50
-    steps_penalty = max(0, max_steps - DEFAULT_MAX_STEPS) * 0.25
-    return spatial_penalty + channel_penalty + action_penalty + steps_penalty
+    return spatial_penalty + channel_penalty + action_penalty
 
 
 def _mean_window(values: list[float]) -> float:
@@ -203,13 +202,12 @@ def _build_candidate_training_config(
     lr: float,
     device: str,
 ) -> dict[str, Any]:
-    overrides = dict(training_overrides(num_envs=num_envs, max_steps=max_steps, device=device) or {})
-    unexpected = sorted(set(overrides) - ALLOWED_TRAINING_OVERRIDE_KEYS)
-    if unexpected:
-        raise ValueError(
-            "candidate.train.training_overrides() returned unsupported keys: "
-            + ", ".join(unexpected)
-        )
+    overrides = _read_candidate_training_overrides(
+        num_envs=num_envs,
+        max_steps=max_steps,
+        device=device,
+    )
+    overrides.pop("max_steps", None)
 
     resolved_lr = float(overrides.pop("lr", lr))
     resolved_training_epochs = int(overrides.pop("training_epochs", 2))
@@ -238,6 +236,45 @@ def _build_candidate_training_config(
     return training_config
 
 
+def _read_candidate_training_overrides(
+    *,
+    num_envs: int,
+    max_steps: int,
+    device: str,
+) -> dict[str, Any]:
+    overrides = dict(training_overrides(num_envs=num_envs, max_steps=max_steps, device=device) or {})
+    unexpected = sorted(set(overrides) - ALLOWED_TRAINING_OVERRIDE_KEYS)
+    if unexpected:
+        raise ValueError(
+            "candidate.train.training_overrides() returned unsupported keys: "
+            + ", ".join(unexpected)
+        )
+    return overrides
+
+
+def _resolve_candidate_max_steps(
+    requested_max_steps: int | None,
+    *,
+    num_envs: int,
+    device: str,
+) -> int:
+    if requested_max_steps is not None:
+        resolved = int(requested_max_steps)
+        if resolved < 1:
+            raise ValueError("max_steps must be at least 1.")
+        return resolved
+
+    overrides = _read_candidate_training_overrides(
+        num_envs=num_envs,
+        max_steps=DEFAULT_MAX_STEPS,
+        device=device,
+    )
+    max_steps = int(overrides.get("max_steps", DEFAULT_MAX_STEPS))
+    if max_steps < 1:
+        raise ValueError("candidate.train.training_overrides()['max_steps'] must be at least 1.")
+    return max_steps
+
+
 def _make_env(
     *,
     num_envs: int,
@@ -252,7 +289,7 @@ def _make_env(
         max_steps=max_steps,
         seed=seed,
     )
-    return create_env(config, num_envs=num_envs, device=device, dtype=dtype)
+    return candidate_env_module.create_env(config, num_envs=num_envs, device=device, dtype=dtype)
 
 
 def _evaluate_policy(
@@ -414,7 +451,7 @@ def evaluate_candidate(
     eval_episodes: int = DEFAULT_EVAL_EPISODES,
     seed_count: int = DEFAULT_SEED_COUNT,
     num_envs: int = DEFAULT_NUM_ENVS,
-    max_steps: int = DEFAULT_MAX_STEPS,
+    max_steps: int | None = None,
     lr: float = DEFAULT_LR,
     device: str = "cpu",
 ) -> EvaluationResult:
@@ -432,9 +469,14 @@ def evaluate_candidate(
         raise ValueError("num_envs must be at least 1.")
 
     resolved_device = _resolve_device(device)
+    resolved_max_steps = _resolve_candidate_max_steps(
+        max_steps,
+        num_envs=num_envs,
+        device=resolved_device,
+    )
     prototype_env = _make_env(
         num_envs=1,
-        max_steps=max_steps,
+        max_steps=resolved_max_steps,
         seed=0,
         device=resolved_device,
         dtype=torch.float32,
@@ -455,7 +497,7 @@ def evaluate_candidate(
             train_episodes=train_episodes,
             eval_episodes=eval_episodes,
             num_envs=num_envs,
-            max_steps=max_steps,
+            max_steps=resolved_max_steps,
             lr=lr,
             device=resolved_device,
         )
@@ -473,7 +515,6 @@ def evaluate_candidate(
     complexity_penalty = _complexity_penalty(
         observation_shape,
         num_actions=num_actions,
-        max_steps=max_steps,
     )
 
     normalized_gain = _clamp(math.tanh(learning_gain / 0.25), 0.0, 1.0)
@@ -501,7 +542,7 @@ def evaluate_candidate(
         mean_episode_length=mean_episode_length,
         observation_shape=observation_shape,
         num_actions=num_actions,
-        max_steps=max_steps,
+        max_steps=resolved_max_steps,
         num_envs=num_envs,
         train_episodes=train_episodes,
         eval_episodes=eval_episodes,
