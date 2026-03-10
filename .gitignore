@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.venv/
+checkpoints/
+recordings/
+run.log
+results.tsv

@@ -1,0 +1,68 @@
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Optional
+
+import numpy as np
+from simverse.core.agent import SimAgent
+
+if TYPE_CHECKING:
+    from torch.nn import Module
+
+DEFAULT_AGENT_ACTIONS = np.arange(6, dtype=np.int64)
+
+
+class FarmtilaAgent(SimAgent):
+    def __init__(
+        self,
+        agent_id: int,
+        position: tuple[int, int],
+        action_space: np.ndarray | None = None,
+        policy: Optional["Module"] = None,
+    ) -> None:
+        action_space = action_space if action_space is not None else DEFAULT_AGENT_ACTIONS
+        super().__init__(name=f"farmer_{agent_id}", action_space=action_space, policy=policy)
+        self.agent_id = agent_id
+        self.position = position
+        self.inventory = 0
+        self.harvested_tiles = 0
+        self.reward = 0.0
+        self.memory: dict = {}
+        self._rng = np.random.default_rng(agent_id)
+
+    def action(self, obs: np.ndarray) -> np.ndarray:
+        if self.policy is not None:
+            return self.policy(obs)
+        return np.array([self._rng.choice(self.action_space)], dtype=np.int64)
+
+    def info(self) -> dict:
+        return {
+            "agent_id": self.agent_id,
+            "position": self.position,
+            "inventory": self.inventory,
+            "harvested_tiles": self.harvested_tiles,
+            "reward": self.reward,
+        }
+
+    def reset(self) -> None:
+        self.inventory = 0
+        self.harvested_tiles = 0
+        self.reward = 0.0
+        self.memory.clear()
+
+    def get_action_space(self) -> np.ndarray:
+        return self.action_space
+
+    def get_memory(self) -> dict:
+        return self.memory
+
+    def current_state(self) -> np.ndarray:
+        return np.array(
+            [self.position[0], self.position[1], self.inventory, self.harvested_tiles],
+            dtype=np.float32,
+        )
+
+    def get_policy(self):
+        return self.policy
+
+    def set_policy(self, policy) -> None:
+        self.policy = policy

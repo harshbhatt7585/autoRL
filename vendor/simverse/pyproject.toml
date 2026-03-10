@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "simverse"
+version = "0.1.0"
+description = "Starter RL library with environments, policies, and training recipes"
+readme = "README.md"
+authors = [{name = "Simverse"}]
+requires-python = ">=3.9"
+dependencies = [
+  "gymnasium>=0.29",
+  "numpy>=1.26",
+  "torch>=2.2",
+  "typer>=0.9"
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=7.4",
+  "ruff>=0.3",
+  "pre-commit>=3.6",
+]
+wandb = [
+  "wandb>=0.19",
+]
+pettingzoo = [
+  "pettingzoo[atari]>=1.24; python_version < '3.13'",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B"]
+ignore = []
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[project.scripts]
+sim = "simverse.cli:app"
+simverse = "simverse.cli:app"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
