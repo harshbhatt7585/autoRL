@@ -20,6 +20,7 @@ OBS_WIDTH = 25
 HISTORY_WINDOW = OBS_WIDTH
 INITIAL_CASH = 500.0
 PRICE_SCALE = 40.0
+HOLDINGS_SCALE = 16.0
 TRADE_PENALTY = 0.0000
 FLIP_PENALTY = 0.0011
 INVALID_ACTION_PENALTY = 0.0100
@@ -237,7 +238,7 @@ class TradingEnv(SimEnv):
 
         price_plane = torch.clamp((current_price / PRICE_SCALE) - 0.75, min=-1.0, max=1.25)
         cash_plane = torch.clamp(self.cash / INITIAL_CASH, min=0.0, max=2.0)
-        exposure_plane = torch.clamp((self.holdings * current_price) / INITIAL_CASH, min=0.0, max=2.0)
+        holdings_plane = torch.clamp(self.holdings / HOLDINGS_SCALE, min=0.0, max=2.0)
         time_plane = torch.clamp(
             (self.max_steps - self.steps).to(dtype=self.dtype) / float(self.max_steps),
             min=0.0,
@@ -245,7 +246,7 @@ class TradingEnv(SimEnv):
         )
         obs[:, 2] = price_plane.view(-1, 1, 1).expand(-1, OBS_HEIGHT, OBS_WIDTH)
         obs[:, 3] = cash_plane.view(-1, 1, 1).expand(-1, OBS_HEIGHT, OBS_WIDTH)
-        obs[:, 4] = exposure_plane.view(-1, 1, 1).expand(-1, OBS_HEIGHT, OBS_WIDTH)
+        obs[:, 4] = holdings_plane.view(-1, 1, 1).expand(-1, OBS_HEIGHT, OBS_WIDTH)
         obs[:, 5] = time_plane.view(-1, 1, 1).expand(-1, OBS_HEIGHT, OBS_WIDTH)
         return obs
 
