@@ -96,7 +96,12 @@ Useful example ladder:
 
 **The first run**: your very first run should always be the baseline, so you run the current `candidate/env.py` and `candidate/train.py` exactly as they are. Right now that baseline is just an empty starter canvas. After recording it, start building the environment described in the build brief above.
 
-## Environment contract
+## ENVs to create
+1. trading ENV -- Build a simulated marketplace where the agent must, where agent can search, compare, filter and buy stocks. Create a dataset of 5 imaginary companies which must have some pattern of stocks. Give reward based on how well the agent did in buying and selling in a small windows of time-frame. One episode reflect an interval for the stocks, where agent will buy and sell based on past history of stocks of the given company. Agent can take 3 actions: buying, selling and resting. Agent will get free $500 initally to invest on stocks. One interval is 100 hours of trading, where agent can take step every hour, that means the episodic length of simulated trading env is 100.
+
+2. Text household task env: A text-only home or lab simulator, where agent can navigate over a home based on grid-world and can complete tasks: open fridge, cook breakfast, wash clothes, place plate on table, cook food, clean floor, turn off lights and turn on lights. The goal of the env is to make agent descipline and organised. Agent has 24 hours to do these home chores. ENV has a fixed and in-order list of items to do and at which hour, that means will get reward based if it figures out the descpline, what task to do at what time. Agent has given 8 tasks do in 24 hour. Agent can navigation in home so it can to be present at on the spot where these task should be done (these task are scatterd in home). The grid world should be 10x10 and one episode length is 1000. There are 1000/24 ~ 41 steps in an hour, that means after 41 steps agent complete 1 hour. Agent can take action: up, down, left, right, rest and start task (when over grid where task present). 
+
+## How to create ENV
 
 The candidate environment must obey these constraints:
 
