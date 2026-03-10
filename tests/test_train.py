@@ -20,10 +20,10 @@ class TrainHarnessTests(unittest.TestCase):
             device="cpu",
         )
         self.assertAlmostEqual(result.score, result.mean_eval_return)
-        self.assertEqual(result.num_actions, 4)
-        self.assertEqual(result.observation_shape, (1, 5, 5))
+        self.assertEqual(result.num_actions, 3)
+        self.assertEqual(result.observation_shape, (6, 5, 5))
         self.assertEqual(result.max_steps, TASK_MAX_STEPS)
-        self.assertIn("empty", result.env_description.lower())
+        self.assertIn("trading", result.env_description.lower())
 
     def test_budget_caps_are_enforced(self) -> None:
         with self.assertRaisesRegex(ValueError, "at most 1000"):

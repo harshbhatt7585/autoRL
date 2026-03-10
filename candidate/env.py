@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from typing import Any
 
 import gymnasium as gym
@@ -8,19 +9,27 @@ import torch
 from simverse.core.env import SimEnv
 
 
-UP = 0
-DOWN = 1
-LEFT = 2
-RIGHT = 3
+BUY = 0
+SELL = 1
+REST = 2
 
+COMPANY_COUNT = 5
+CHANNEL_COUNT = 6
 GRID_SIZE = 5
-CHANNEL_COUNT = 1
-START_X = GRID_SIZE // 2
-START_Y = GRID_SIZE // 2
+HISTORY_WINDOW = GRID_SIZE * GRID_SIZE
+INITIAL_CASH = 500.0
+HOLDINGS_SCALE = 16.0
+PRICE_SCALE = 40.0
+TRADE_PENALTY = 0.0005
+FLIP_PENALTY = 0.0015
+INVALID_ACTION_PENALTY = 0.0100
+DENSE_REWARD_CLIP = 0.0800
+TERMINAL_REWARD_CLIP = 0.6000
+SUCCESS_MARGIN = 5.0
 
 
-class EmptyCanvasEnv(SimEnv):
-    """Intentionally minimal starter environment to be replaced by the search agent."""
+class TradingEnv(SimEnv):
+    """Single-company trading task over five synthetic price regimes."""
 
     def __init__(
         self,
@@ -35,19 +44,19 @@ class EmptyCanvasEnv(SimEnv):
         self.num_agents = 1
         self.num_envs = self._resolve_num_envs(num_envs, config, default=32)
         self.max_steps = int(config.max_steps)
+        self.series_length = self.max_steps + HISTORY_WINDOW
+        self.base_seed = int(getattr(config, "seed", 0) or 0)
 
-        self._action_space = gym.spaces.Discrete(4)
+        self._action_space = gym.spaces.Discrete(3)
         self._observation_space = gym.spaces.Box(
-            low=0.0,
-            high=1.0,
+            low=-2.0,
+            high=2.0,
             shape=(CHANNEL_COUNT, GRID_SIZE, GRID_SIZE),
             dtype=float,
         )
 
         self.register_buffer("done", torch.zeros(self.num_envs, dtype=torch.bool, device=self.device))
         self.register_buffer("steps", torch.zeros(self.num_envs, dtype=torch.int64, device=self.device))
-        self.register_buffer("agent_x", torch.zeros(self.num_envs, dtype=torch.int64, device=self.device))
-        self.register_buffer("agent_y", torch.zeros(self.num_envs, dtype=torch.int64, device=self.device))
         self.register_buffer(
             "episode_return",
             torch.zeros(self.num_envs, dtype=self.dtype, device=self.device),
@@ -55,6 +64,25 @@ class EmptyCanvasEnv(SimEnv):
         self.register_buffer(
             "episode_length",
             torch.zeros(self.num_envs, dtype=torch.int64, device=self.device),
+        )
+        self.register_buffer("cash", torch.zeros(self.num_envs, dtype=self.dtype, device=self.device))
+        self.register_buffer("holdings", torch.zeros(self.num_envs, dtype=self.dtype, device=self.device))
+        self.register_buffer(
+            "last_trade_direction",
+            torch.zeros(self.num_envs, dtype=torch.int64, device=self.device),
+        )
+        self.register_buffer(
+            "episode_counter",
+            torch.zeros(self.num_envs, dtype=torch.int64, device=self.device),
+        )
+        self.register_buffer("company_id", torch.zeros(self.num_envs, dtype=torch.int64, device=self.device))
+        self.register_buffer(
+            "price_paths",
+            torch.zeros(self.num_envs, self.series_length, dtype=self.dtype, device=self.device),
+        )
+        self.register_buffer(
+            "history_offsets",
+            torch.arange(HISTORY_WINDOW, dtype=torch.int64, device=self.device),
         )
 
         self.reset()
@@ -68,18 +96,22 @@ class EmptyCanvasEnv(SimEnv):
         return self._observation_space
 
     def describe(self) -> str:
-        return "An intentionally empty 5x5 starter canvas with movement only and no objective yet."
+        return (
+            "A 100-hour synthetic trading task over five fictional company regimes "
+            "with buy, sell, and rest actions."
+        )
 
     def assign_agents(self, agents: list[Any]) -> None:
-        self._assign_agents(agents, expected_count=1, label="EmptyCanvasEnv")
+        self._assign_agents(agents, expected_count=1, label="TradingEnv")
 
     def reset(self) -> dict[str, torch.Tensor]:
         all_envs = torch.ones(self.num_envs, dtype=torch.bool, device=self.device)
-        self._reset_subset(all_envs)
         self.done.zero_()
         self.steps.zero_()
         self.episode_return.zero_()
         self.episode_length.zero_()
+        self.last_trade_direction.zero_()
+        self._reset_subset(all_envs)
         return self._pack_observation_dict(self._build_observation())
 
     def step(
@@ -88,28 +120,75 @@ class EmptyCanvasEnv(SimEnv):
     ) -> tuple[dict[str, torch.Tensor], torch.Tensor, torch.Tensor, dict[str, torch.Tensor]]:
         action_tensor = self._normalize_single_agent_actions(
             actions,
-            missing_action=UP,
-            dict_default=UP,
+            missing_action=REST,
+            dict_default=REST,
         )
 
         self.done.zero_()
+
+        price_window = self._price_window()
+        current_price = price_window[:, -1].clamp(min=1.0)
+        next_price = self._next_price().clamp(min=1.0)
+
+        valid_buy = (action_tensor == BUY) & (self.cash >= current_price)
+        valid_sell = (action_tensor == SELL) & (self.holdings >= 1.0)
+        valid_trade = valid_buy | valid_sell
+        invalid_buy = (action_tensor == BUY) & (~valid_buy)
+        invalid_sell = (action_tensor == SELL) & (~valid_sell)
+        flip_trade = (valid_buy & (self.last_trade_direction < 0)) | (
+            valid_sell & (self.last_trade_direction > 0)
+        )
+
+        buy_delta = valid_buy.to(dtype=self.dtype)
+        sell_delta = valid_sell.to(dtype=self.dtype)
+        updated_cash = self.cash - (buy_delta * current_price) + (sell_delta * current_price)
+        updated_holdings = self.holdings + buy_delta - sell_delta
+        self.cash.copy_(updated_cash)
+        self.holdings.copy_(updated_holdings)
+
+        portfolio_now = self.cash + (self.holdings * current_price)
+        portfolio_next = self.cash + (self.holdings * next_price)
+
+        reward = torch.clamp(
+            (portfolio_next - portfolio_now) / INITIAL_CASH,
+            min=-DENSE_REWARD_CLIP,
+            max=DENSE_REWARD_CLIP,
+        )
+        reward -= valid_trade.to(dtype=self.dtype) * TRADE_PENALTY
+        reward -= flip_trade.to(dtype=self.dtype) * FLIP_PENALTY
+        reward -= invalid_buy.to(dtype=self.dtype) * INVALID_ACTION_PENALTY
+        reward -= invalid_sell.to(dtype=self.dtype) * INVALID_ACTION_PENALTY
+
+        next_trade_direction = torch.zeros_like(self.last_trade_direction)
+        next_trade_direction = torch.where(
+            valid_buy,
+            torch.ones_like(next_trade_direction),
+            next_trade_direction,
+        )
+        next_trade_direction = torch.where(
+            valid_sell,
+            -torch.ones_like(next_trade_direction),
+            next_trade_direction,
+        )
+        self.last_trade_direction.copy_(next_trade_direction)
+
         self.steps.add_(1)
         self.episode_length.add_(1)
-
-        delta_x = torch.tensor([0, 0, -1, 1], dtype=torch.int64, device=self.device)
-        delta_y = torch.tensor([-1, 1, 0, 0], dtype=torch.int64, device=self.device)
-        next_x = torch.clamp(self.agent_x + delta_x[action_tensor], 0, GRID_SIZE - 1)
-        next_y = torch.clamp(self.agent_y + delta_y[action_tensor], 0, GRID_SIZE - 1)
-        self.agent_x.copy_(next_x)
-        self.agent_y.copy_(next_y)
-
-        reward = torch.zeros(self.num_envs, dtype=self.dtype, device=self.device)
-        success = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
-
-        self.episode_return.add_(reward)
         done = self.steps >= self.max_steps
         self.done.copy_(done)
 
+        final_value = self.cash + (self.holdings * next_price)
+        terminal_reward = torch.clamp(
+            (final_value - INITIAL_CASH) / INITIAL_CASH,
+            min=-TERMINAL_REWARD_CLIP,
+            max=TERMINAL_REWARD_CLIP,
+        )
+        reward = reward + torch.where(done, terminal_reward, torch.zeros_like(reward))
+        reward = torch.clamp(reward, min=-1.0, max=1.0)
+
+        success = done & (final_value >= (INITIAL_CASH + SUCCESS_MARGIN))
+
+        self.episode_return.add_(reward)
         finished_return = torch.where(done, self.episode_return, torch.zeros_like(self.episode_return))
         finished_length = torch.where(done, self.episode_length, torch.zeros_like(self.episode_length))
 
@@ -121,6 +200,13 @@ class EmptyCanvasEnv(SimEnv):
             )
             self.episode_length.copy_(
                 torch.where(done, torch.zeros_like(self.episode_length), self.episode_length)
+            )
+            self.last_trade_direction.copy_(
+                torch.where(
+                    done,
+                    torch.zeros_like(self.last_trade_direction),
+                    self.last_trade_direction,
+                )
             )
 
         observation = self._pack_observation_dict(self._build_observation())
@@ -134,24 +220,125 @@ class EmptyCanvasEnv(SimEnv):
         return observation, reward.unsqueeze(1), done.clone(), info
 
     def _build_observation(self) -> torch.Tensor:
+        price_window = self._price_window()
+        current_price = price_window[:, -1].clamp(min=1.0)
+
+        short_window = price_window[:, -4:]
+        long_window = price_window[:, -12:]
+        trend_signal = torch.tanh(
+            ((short_window.mean(dim=1) - long_window.mean(dim=1)) / long_window.mean(dim=1).clamp(min=1.0))
+            * 10.0
+        )
+        price_history = torch.clamp((price_window / PRICE_SCALE) - 0.75, min=-1.0, max=1.25)
+        return_history = torch.zeros_like(price_window)
+        price_delta = (price_window[:, 1:] - price_window[:, :-1]) / price_window[:, :-1].clamp(min=1.0)
+        return_history[:, 1:] = torch.tanh(price_delta * 12.0)
+
         obs = torch.zeros(
             (self.num_envs, CHANNEL_COUNT, GRID_SIZE, GRID_SIZE),
             dtype=self.dtype,
             device=self.device,
         )
-        batch_index = torch.arange(self.num_envs, device=self.device)
-        obs[batch_index, 0, self.agent_y, self.agent_x] = 1.0
+        obs[:, 0] = price_history.reshape(self.num_envs, GRID_SIZE, GRID_SIZE)
+        obs[:, 1] = return_history.reshape(self.num_envs, GRID_SIZE, GRID_SIZE)
+
+        cash_plane = torch.clamp(self.cash / INITIAL_CASH, min=0.0, max=2.0)
+        holdings_plane = torch.clamp(self.holdings / HOLDINGS_SCALE, min=0.0, max=2.0)
+        time_plane = torch.clamp(
+            (self.max_steps - self.steps).to(dtype=self.dtype) / float(self.max_steps),
+            min=0.0,
+            max=1.0,
+        )
+        obs[:, 2] = trend_signal.view(-1, 1, 1).expand(-1, GRID_SIZE, GRID_SIZE)
+        obs[:, 3] = cash_plane.view(-1, 1, 1).expand(-1, GRID_SIZE, GRID_SIZE)
+        obs[:, 4] = holdings_plane.view(-1, 1, 1).expand(-1, GRID_SIZE, GRID_SIZE)
+        obs[:, 5] = time_plane.view(-1, 1, 1).expand(-1, GRID_SIZE, GRID_SIZE)
         return obs
 
+    def _price_window(self) -> torch.Tensor:
+        indices = self.steps.unsqueeze(1) + self.history_offsets.unsqueeze(0)
+        return torch.gather(self.price_paths, 1, indices)
+
+    def _next_price(self) -> torch.Tensor:
+        next_index = self.steps + HISTORY_WINDOW
+        return torch.gather(self.price_paths, 1, next_index.unsqueeze(1)).squeeze(1)
+
     def _reset_subset(self, mask: torch.Tensor) -> None:
-        self.agent_x.copy_(torch.where(mask, torch.full_like(self.agent_x, START_X), self.agent_x))
-        self.agent_y.copy_(torch.where(mask, torch.full_like(self.agent_y, START_Y), self.agent_y))
+        indices = torch.nonzero(mask, as_tuple=False).flatten().cpu().tolist()
+        if not indices:
+            return
+
+        for env_index in indices:
+            self.episode_counter[env_index] += 1
+            episode_seed = (
+                self.base_seed
+                + (env_index * 10007)
+                + (int(self.episode_counter[env_index].item()) * 7919)
+            )
+            generator = torch.Generator(device="cpu")
+            generator.manual_seed(episode_seed)
+
+            company_id = int((env_index + int(self.episode_counter[env_index].item())) % COMPANY_COUNT)
+            price_path = self._generate_price_path(company_id, generator).to(
+                device=self.device,
+                dtype=self.dtype,
+            )
+
+            self.company_id[env_index] = company_id
+            self.price_paths[env_index].copy_(price_path)
+            self.cash[env_index] = INITIAL_CASH
+            self.holdings[env_index] = 0.0
+            self.last_trade_direction[env_index] = 0
+
+    def _generate_price_path(self, company_id: int, generator: torch.Generator) -> torch.Tensor:
+        # Each company family mixes one clean regime with mild seeded variation.
+        t = torch.arange(self.series_length, dtype=torch.float32)
+        phase = float(torch.rand((), generator=generator).item()) * (2.0 * math.pi)
+        amplitude = 0.85 + (0.30 * float(torch.rand((), generator=generator).item()))
+        drift = 0.85 + (0.30 * float(torch.rand((), generator=generator).item()))
+        noise = torch.randn(self.series_length, generator=generator, dtype=torch.float32)
+
+        if company_id == 0:
+            base = 20.0 + (0.19 * drift * t) + (1.0 * amplitude * torch.sin((t / 8.0) + phase))
+            price = base + (0.35 * noise)
+        elif company_id == 1:
+            price = torch.empty(self.series_length, dtype=torch.float32)
+            mean_level = 24.0 + (1.0 * math.sin(phase))
+            price[0] = mean_level + (0.8 * float(torch.randn((), generator=generator).item()))
+            for index in range(1, self.series_length):
+                anchor = mean_level + (0.06 * index) + (1.4 * amplitude * math.sin((index / 9.0) + phase))
+                reversion = 0.28 * (anchor - float(price[index - 1].item()))
+                shock = 0.45 * float(noise[index].item())
+                price[index] = max(8.0, float(price[index - 1].item()) + reversion + shock)
+            return price.clamp(min=6.0, max=80.0)
+        elif company_id == 2:
+            surge = 17.0 / (1.0 + torch.exp(-((t - 22.0) / 5.0)))
+            fade = 11.0 / (1.0 + torch.exp(-((t - 62.0) / 6.0)))
+            base = 18.0 + surge - fade + (1.1 * torch.sin((t / 5.0) + phase))
+            price = base + (0.45 * noise)
+        elif company_id == 3:
+            base = 24.0 + (0.06 * drift * t) + (4.5 * amplitude * torch.sin((t / 7.0) + phase))
+            base += 1.6 * torch.sin((t / 18.0) + (0.5 * phase))
+            price = base + (0.30 * noise)
+        else:
+            fakeouts = 2.0 * amplitude * torch.sin((t / 4.8) + phase)
+            fakeouts += 1.1 * torch.sin((t / 2.0) + (0.3 * phase))
+            traps = 1.8 * torch.exp(-((t - 26.0) / 6.0) ** 2)
+            traps -= 1.9 * torch.exp(-((t - 61.0) / 7.0) ** 2)
+            traps += 1.4 * torch.exp(-((t - 86.0) / 5.0) ** 2)
+            base = 29.0 + (0.02 * drift * t) + fakeouts + traps
+            price = base + (0.40 * noise)
+
+        smoothed = price.clone()
+        for index in range(1, self.series_length):
+            smoothed[index] = (0.78 * smoothed[index - 1]) + (0.22 * price[index])
+        return smoothed.clamp(min=6.0, max=80.0)
 
     def close(self) -> None:
         return None
 
 
-CandidateEnv = EmptyCanvasEnv
+CandidateEnv = TradingEnv
 
 
 def create_env(
@@ -160,5 +347,5 @@ def create_env(
     num_envs: int | None = None,
     device: str | torch.device = "cpu",
     dtype: torch.dtype = torch.float32,
-) -> EmptyCanvasEnv:
-    return EmptyCanvasEnv(config=config, num_envs=num_envs, device=device, dtype=dtype)
+) -> TradingEnv:
+    return TradingEnv(config=config, num_envs=num_envs, device=device, dtype=dtype)
