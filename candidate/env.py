@@ -15,12 +15,12 @@ REST = 2
 
 COMPANY_COUNT = 5
 CHANNEL_COUNT = 6
-GRID_SIZE = 5
-HISTORY_WINDOW = GRID_SIZE * GRID_SIZE
+OBS_HEIGHT = 1
+OBS_WIDTH = 25
+HISTORY_WINDOW = OBS_WIDTH
 INITIAL_CASH = 500.0
-HOLDINGS_SCALE = 16.0
 PRICE_SCALE = 40.0
-TRADE_PENALTY = 0.0005
+TRADE_PENALTY = 0.0001
 FLIP_PENALTY = 0.0015
 INVALID_ACTION_PENALTY = 0.0100
 DENSE_REWARD_CLIP = 0.0800
@@ -51,7 +51,7 @@ class TradingEnv(SimEnv):
         self._observation_space = gym.spaces.Box(
             low=-2.0,
             high=2.0,
-            shape=(CHANNEL_COUNT, GRID_SIZE, GRID_SIZE),
+            shape=(CHANNEL_COUNT, OBS_HEIGHT, OBS_WIDTH),
             dtype=float,
         )
 
@@ -222,37 +222,31 @@ class TradingEnv(SimEnv):
     def _build_observation(self) -> torch.Tensor:
         price_window = self._price_window()
         current_price = price_window[:, -1].clamp(min=1.0)
-
-        short_window = price_window[:, -4:]
-        long_window = price_window[:, -12:]
-        trend_signal = torch.tanh(
-            ((short_window.mean(dim=1) - long_window.mean(dim=1)) / long_window.mean(dim=1).clamp(min=1.0))
-            * 10.0
-        )
-        price_history = torch.clamp((price_window / PRICE_SCALE) - 0.75, min=-1.0, max=1.25)
+        price_history = torch.tanh(((price_window / current_price.unsqueeze(1)) - 1.0) * 6.0)
         return_history = torch.zeros_like(price_window)
         price_delta = (price_window[:, 1:] - price_window[:, :-1]) / price_window[:, :-1].clamp(min=1.0)
         return_history[:, 1:] = torch.tanh(price_delta * 12.0)
 
         obs = torch.zeros(
-            (self.num_envs, CHANNEL_COUNT, GRID_SIZE, GRID_SIZE),
+            (self.num_envs, CHANNEL_COUNT, OBS_HEIGHT, OBS_WIDTH),
             dtype=self.dtype,
             device=self.device,
         )
-        obs[:, 0] = price_history.reshape(self.num_envs, GRID_SIZE, GRID_SIZE)
-        obs[:, 1] = return_history.reshape(self.num_envs, GRID_SIZE, GRID_SIZE)
+        obs[:, 0, 0] = price_history
+        obs[:, 1, 0] = return_history
 
+        price_plane = torch.clamp((current_price / PRICE_SCALE) - 0.75, min=-1.0, max=1.25)
         cash_plane = torch.clamp(self.cash / INITIAL_CASH, min=0.0, max=2.0)
-        holdings_plane = torch.clamp(self.holdings / HOLDINGS_SCALE, min=0.0, max=2.0)
+        exposure_plane = torch.clamp((self.holdings * current_price) / INITIAL_CASH, min=0.0, max=2.0)
         time_plane = torch.clamp(
             (self.max_steps - self.steps).to(dtype=self.dtype) / float(self.max_steps),
             min=0.0,
             max=1.0,
         )
-        obs[:, 2] = trend_signal.view(-1, 1, 1).expand(-1, GRID_SIZE, GRID_SIZE)
-        obs[:, 3] = cash_plane.view(-1, 1, 1).expand(-1, GRID_SIZE, GRID_SIZE)
-        obs[:, 4] = holdings_plane.view(-1, 1, 1).expand(-1, GRID_SIZE, GRID_SIZE)
-        obs[:, 5] = time_plane.view(-1, 1, 1).expand(-1, GRID_SIZE, GRID_SIZE)
+        obs[:, 2] = price_plane.view(-1, 1, 1).expand(-1, OBS_HEIGHT, OBS_WIDTH)
+        obs[:, 3] = cash_plane.view(-1, 1, 1).expand(-1, OBS_HEIGHT, OBS_WIDTH)
+        obs[:, 4] = exposure_plane.view(-1, 1, 1).expand(-1, OBS_HEIGHT, OBS_WIDTH)
+        obs[:, 5] = time_plane.view(-1, 1, 1).expand(-1, OBS_HEIGHT, OBS_WIDTH)
         return obs
 
     def _price_window(self) -> torch.Tensor:
