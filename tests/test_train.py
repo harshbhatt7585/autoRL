@@ -16,7 +16,7 @@ class TrainHarnessTests(unittest.TestCase):
             num_envs=4,
             device="cpu",
         )
-        self.assertGreaterEqual(result.score, 0.0)
+        self.assertAlmostEqual(result.score, result.mean_eval_return)
         self.assertEqual(result.num_actions, 4)
         self.assertEqual(result.observation_shape, (1, 5, 5))
         self.assertEqual(result.max_steps, TASK_MAX_STEPS)

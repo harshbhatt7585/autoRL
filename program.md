@@ -44,6 +44,13 @@ through `training_overrides()["max_steps"]`.
 
 ## Experimentation
 
+The fixed score is:
+
+- `score = mean_eval_return`
+
+That is the average post-training episode return across all greedy evaluation
+episodes and all seeds. Other reported metrics are diagnostics only.
+
 Each experiment runs with an **agent-chosen episode budget**. You launch it as:
 
 ```bash
@@ -296,7 +303,7 @@ When the script finishes it prints a summary like this:
 
 ```text
 ---
-score: 99.600000
+score: 1.865000
 mean_eval_return: 1.865000
 mean_solve_rate: 1.000000
 mean_train_return: 4.908301
@@ -326,7 +333,7 @@ commit	train_episodes	eval_episodes	max_steps	score	solve_rate	eval_return	statu
 2. train episodes used, for example `128`
 3. eval episodes used, for example `16`
 4. task horizon from `max_steps`, for example `100`
-5. score achieved, for example `99.600000` — use `0.000000` for crashes
+5. score achieved, for example `1.865000` — use `0.000000` for crashes
 6. solve rate achieved, for example `1.000000` — use `0.000000` for crashes
 7. eval return achieved, for example `1.865000` — use `0.000000` for crashes
 8. status: `keep`, `discard`, or `crash`

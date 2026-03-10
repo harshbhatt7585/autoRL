@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-import math
 from pathlib import Path
 import random
 import statistics
@@ -517,21 +516,12 @@ def evaluate_candidate(
         num_actions=num_actions,
     )
 
-    normalized_gain = _clamp(math.tanh(learning_gain / 0.25), 0.0, 1.0)
-    normalized_train_return = _clamp((mean_train_return + 0.5) / 1.5, 0.0, 1.0)
-    score = (
-        42.0 * mean_solve_rate
-        + 20.0 * headroom_bonus
-        + 18.0 * normalized_gain
-        + 10.0 * stability
-        + 10.0 * normalized_train_return
-        - complexity_penalty
-    )
+    score = mean_eval_return
 
     return EvaluationResult(
         env_name=env_name,
         env_description=env_description,
-        score=max(0.0, score),
+        score=score,
         mean_eval_return=mean_eval_return,
         mean_solve_rate=mean_solve_rate,
         mean_train_return=mean_train_return,

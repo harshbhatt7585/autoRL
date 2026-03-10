@@ -22,18 +22,16 @@ copy of [`simverse`](https://github.com/harshbhatt7585/simverse).
 
 ## Scoring philosophy
 
-The evaluator reports greedy evaluation return, but the score itself combines:
+The fixed score is simple:
 
-- greedy solve rate after PPO training
-- training gain from early episodes to late episodes
-- headroom bonus, which penalizes trivial untrained policies
-- stability across seeds
-- normalized late-stage training return
-- a small penalty for oversized observation and action spaces
+- `score = mean_eval_return`
 
-This pushes the agent toward environments that are solvable, learnable, and not
-completely trivial. Longer task horizons are not directly penalized just for
-being longer.
+That means the candidate is judged only by the average post-training episode
+return across all greedy evaluation episodes and all seeds.
+
+Other reported metrics such as solve rate, learning gain, stability, and
+complexity penalty are still printed for debugging and analysis, but they no
+longer affect the score.
 
 ## Quick start
 
