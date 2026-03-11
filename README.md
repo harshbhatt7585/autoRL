@@ -1,5 +1,8 @@
 # autoRL
 
+![Agent performance by experiment](results/results_score_graph.png)
+
+
 This repo is for autonomous search over RL environments backed by a vendored
 copy of [`simverse`](https://github.com/harshbhatt7585/simverse).
 
