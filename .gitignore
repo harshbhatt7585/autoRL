@@ -5,3 +5,4 @@ checkpoints/
 recordings/
 run.log
 results.tsv
+.log
