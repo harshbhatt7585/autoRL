@@ -14,7 +14,7 @@ SELL = 1
 REST = 2
 
 COMPANY_COUNT = 5
-CHANNEL_COUNT = 8
+CHANNEL_COUNT = 10
 OBS_HEIGHT = 1
 OBS_WIDTH = 25
 HISTORY_WINDOW = OBS_WIDTH
@@ -253,12 +253,26 @@ class TradingEnv(SimEnv):
         obs[:, 0, 0] = price_history
         obs[:, 1, 0] = return_history
 
+        recent_min = price_window.min(dim=1).values
+        recent_max = price_window.max(dim=1).values
+        recent_span = (recent_max - recent_min).clamp(min=1.0)
+
         price_plane = torch.clamp((current_price / PRICE_SCALE) - 0.75, min=-1.0, max=1.25)
         cash_plane = torch.clamp(self.cash / INITIAL_CASH, min=0.0, max=2.0)
         exposure_plane = torch.clamp((self.holdings * current_price) / INITIAL_CASH, min=0.0, max=2.0)
         holdings_plane = torch.clamp(self.holdings / HOLDINGS_SCALE, min=0.0, max=2.0)
         unrealized_plane = torch.clamp(
             (self.holdings * (current_price - self.avg_entry_price)) / INITIAL_CASH,
+            min=-1.0,
+            max=1.0,
+        )
+        buying_power_plane = torch.clamp(
+            (self.cash / current_price) / HOLDINGS_SCALE,
+            min=0.0,
+            max=2.0,
+        )
+        range_position_plane = torch.clamp(
+            (((current_price - recent_min) / recent_span) * 2.0) - 1.0,
             min=-1.0,
             max=1.0,
         )
@@ -272,7 +286,9 @@ class TradingEnv(SimEnv):
         obs[:, 4] = exposure_plane.view(-1, 1, 1).expand(-1, OBS_HEIGHT, OBS_WIDTH)
         obs[:, 5] = holdings_plane.view(-1, 1, 1).expand(-1, OBS_HEIGHT, OBS_WIDTH)
         obs[:, 6] = unrealized_plane.view(-1, 1, 1).expand(-1, OBS_HEIGHT, OBS_WIDTH)
-        obs[:, 7] = time_plane.view(-1, 1, 1).expand(-1, OBS_HEIGHT, OBS_WIDTH)
+        obs[:, 7] = buying_power_plane.view(-1, 1, 1).expand(-1, OBS_HEIGHT, OBS_WIDTH)
+        obs[:, 8] = range_position_plane.view(-1, 1, 1).expand(-1, OBS_HEIGHT, OBS_WIDTH)
+        obs[:, 9] = time_plane.view(-1, 1, 1).expand(-1, OBS_HEIGHT, OBS_WIDTH)
         return obs
 
     def _price_window(self) -> torch.Tensor:

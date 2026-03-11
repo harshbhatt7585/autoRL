@@ -8,10 +8,12 @@ import torch.nn as nn
 TASK_MAX_STEPS = 100
 TEMPORAL_CHANNELS = 32
 TEMPORAL_HIDDEN = 48
-SCALAR_HIDDEN = 40
+SCALAR_HIDDEN = 56
 SUMMARY_HIDDEN = 40
 SUMMARY_FEATURES = 12
 HIDDEN_DIM = 128
+POLICY_HIDDEN = 96
+VALUE_HIDDEN = 128
 TRAINING_EPOCHS = 8
 LEARNING_RATE = 3e-4
 ENTROPY_COEF = 0.001
@@ -51,14 +53,24 @@ class TradingPolicy(nn.Module):
             nn.Linear(SUMMARY_HIDDEN, SUMMARY_HIDDEN),
             nn.Tanh(),
         )
-        self.trunk = nn.Sequential(
+        self.shared_trunk = nn.Sequential(
             nn.Linear(HIDDEN_DIM + SCALAR_HIDDEN + SUMMARY_HIDDEN, HIDDEN_DIM),
             nn.Tanh(),
+        )
+        self.policy_trunk = nn.Sequential(
             nn.Linear(HIDDEN_DIM, HIDDEN_DIM),
             nn.Tanh(),
+            nn.Linear(HIDDEN_DIM, POLICY_HIDDEN),
+            nn.Tanh(),
         )
-        self.action_head = nn.Linear(HIDDEN_DIM, action_space.n)
-        self.value_head = nn.Linear(HIDDEN_DIM, 1)
+        self.value_trunk = nn.Sequential(
+            nn.Linear(HIDDEN_DIM, HIDDEN_DIM),
+            nn.Tanh(),
+            nn.Linear(HIDDEN_DIM, VALUE_HIDDEN),
+            nn.Tanh(),
+        )
+        self.action_head = nn.Linear(POLICY_HIDDEN, action_space.n)
+        self.value_head = nn.Linear(VALUE_HIDDEN, 1)
         nn.init.zeros_(self.action_head.bias)
         self.action_head.bias.data[2] = 0.1
 
@@ -96,8 +108,10 @@ class TradingPolicy(nn.Module):
         encoded_history = self.history_head(self.temporal_encoder(temporal))
         encoded_scalars = self.scalar_encoder(scalars)
         encoded_summary = self.summary_encoder(summary)
-        encoded = self.trunk(torch.cat((encoded_history, encoded_scalars, encoded_summary), dim=-1))
-        return self.action_head(encoded), self.value_head(encoded)
+        encoded = self.shared_trunk(torch.cat((encoded_history, encoded_scalars, encoded_summary), dim=-1))
+        policy_hidden = self.policy_trunk(encoded)
+        value_hidden = self.value_trunk(encoded)
+        return self.action_head(policy_hidden), self.value_head(value_hidden)
 
 
 def build_policy(obs_space: Any, action_space: Any) -> nn.Module:
