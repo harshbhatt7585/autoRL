@@ -88,3 +88,6 @@ git commit -m "Initial Simverse autoRL scaffold"
 
 Then point your coding agent at `program.md`.
 
+
+## Citations and Thank You
+  - [Autoresearch](https://github.com/karpathy/autoresearch)
