@@ -2,6 +2,9 @@
 
 This repo is for autonomous research over RL environments runs over [`simverse`](https://github.com/harshbhatt7585/simverse).
 
+I can build an RL environment and train it using a single `program.md` file.
+
+
 ## Design principles
 
 - keep the evaluator fixed
