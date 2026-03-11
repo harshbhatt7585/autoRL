@@ -8,8 +8,9 @@ import torch.nn as nn
 TASK_MAX_STEPS = 100
 TEMPORAL_CHANNELS = 32
 TEMPORAL_HIDDEN = 48
-SCALAR_HIDDEN = 32
-SUMMARY_HIDDEN = 32
+SCALAR_HIDDEN = 40
+SUMMARY_HIDDEN = 40
+SUMMARY_FEATURES = 12
 HIDDEN_DIM = 128
 TRAINING_EPOCHS = 8
 LEARNING_RATE = 3e-4
@@ -45,7 +46,7 @@ class TradingPolicy(nn.Module):
             nn.Tanh(),
         )
         self.summary_encoder = nn.Sequential(
-            nn.Linear(8, SUMMARY_HIDDEN),
+            nn.Linear(SUMMARY_FEATURES, SUMMARY_HIDDEN),
             nn.Tanh(),
             nn.Linear(SUMMARY_HIDDEN, SUMMARY_HIDDEN),
             nn.Tanh(),
@@ -71,17 +72,24 @@ class TradingPolicy(nn.Module):
         temporal = obs[:, :2].reshape(obs.shape[0], 2, -1)
         price_history = temporal[:, 0]
         return_history = temporal[:, 1]
+        recent_prices = price_history[:, -8:]
+        recent_returns = return_history[:, -8:]
+        medium_returns = return_history[:, -24:]
         scalars = obs[:, 2:, 0, 0]
         summary = torch.stack(
             (
                 price_history[:, -4:].mean(dim=-1),
                 price_history[:, -12:].mean(dim=-1),
                 price_history.mean(dim=-1),
+                recent_prices.max(dim=-1).values,
+                recent_prices.min(dim=-1).values,
+                return_history[:, -1],
                 return_history[:, -4:].mean(dim=-1),
                 return_history[:, -12:].mean(dim=-1),
+                medium_returns.mean(dim=-1),
                 return_history[:, -12:].abs().mean(dim=-1),
-                price_history.max(dim=-1).values,
-                price_history.min(dim=-1).values,
+                recent_returns.abs().max(dim=-1).values,
+                recent_returns.std(dim=-1, unbiased=False),
             ),
             dim=-1,
         )
