@@ -4,6 +4,8 @@ This repo is for autonomous research over RL environments that run atop [`simver
 
 It can build RL environments and train it using a single `program.md` file.
 
+Simverse designed as an abstraction layer which agent can use to build and train the env.
+
 
 ## Design principles
 
