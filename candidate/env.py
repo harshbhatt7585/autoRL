@@ -14,12 +14,13 @@ SELL = 1
 REST = 2
 
 COMPANY_COUNT = 5
-CHANNEL_COUNT = 6
+CHANNEL_COUNT = 8
 OBS_HEIGHT = 1
 OBS_WIDTH = 25
 HISTORY_WINDOW = OBS_WIDTH
 INITIAL_CASH = 500.0
 PRICE_SCALE = 40.0
+HOLDINGS_SCALE = 24.0
 TRADE_PENALTY = 0.0000
 FLIP_PENALTY = 0.0005
 INVALID_ACTION_PENALTY = 0.0100
@@ -67,6 +68,10 @@ class TradingEnv(SimEnv):
         )
         self.register_buffer("cash", torch.zeros(self.num_envs, dtype=self.dtype, device=self.device))
         self.register_buffer("holdings", torch.zeros(self.num_envs, dtype=self.dtype, device=self.device))
+        self.register_buffer(
+            "avg_entry_price",
+            torch.zeros(self.num_envs, dtype=self.dtype, device=self.device),
+        )
         self.register_buffer(
             "last_trade_direction",
             torch.zeros(self.num_envs, dtype=torch.int64, device=self.device),
@@ -143,8 +148,21 @@ class TradingEnv(SimEnv):
         sell_delta = valid_sell.to(dtype=self.dtype)
         updated_cash = self.cash - (buy_delta * current_price) + (sell_delta * current_price)
         updated_holdings = self.holdings + buy_delta - sell_delta
+        buy_basis = torch.where(
+            updated_holdings > 0.0,
+            ((self.avg_entry_price * self.holdings) + (buy_delta * current_price))
+            / updated_holdings.clamp(min=1.0),
+            torch.zeros_like(self.avg_entry_price),
+        )
+        updated_avg_entry = torch.where(valid_buy, buy_basis, self.avg_entry_price)
+        updated_avg_entry = torch.where(
+            valid_sell & (updated_holdings <= 0.0),
+            torch.zeros_like(updated_avg_entry),
+            updated_avg_entry,
+        )
         self.cash.copy_(updated_cash)
         self.holdings.copy_(updated_holdings)
+        self.avg_entry_price.copy_(updated_avg_entry)
 
         portfolio_now = self.cash + (self.holdings * current_price)
         portfolio_next = self.cash + (self.holdings * next_price)
@@ -238,6 +256,12 @@ class TradingEnv(SimEnv):
         price_plane = torch.clamp((current_price / PRICE_SCALE) - 0.75, min=-1.0, max=1.25)
         cash_plane = torch.clamp(self.cash / INITIAL_CASH, min=0.0, max=2.0)
         exposure_plane = torch.clamp((self.holdings * current_price) / INITIAL_CASH, min=0.0, max=2.0)
+        holdings_plane = torch.clamp(self.holdings / HOLDINGS_SCALE, min=0.0, max=2.0)
+        unrealized_plane = torch.clamp(
+            (self.holdings * (current_price - self.avg_entry_price)) / INITIAL_CASH,
+            min=-1.0,
+            max=1.0,
+        )
         time_plane = torch.clamp(
             (self.max_steps - self.steps).to(dtype=self.dtype) / float(self.max_steps),
             min=0.0,
@@ -246,7 +270,9 @@ class TradingEnv(SimEnv):
         obs[:, 2] = price_plane.view(-1, 1, 1).expand(-1, OBS_HEIGHT, OBS_WIDTH)
         obs[:, 3] = cash_plane.view(-1, 1, 1).expand(-1, OBS_HEIGHT, OBS_WIDTH)
         obs[:, 4] = exposure_plane.view(-1, 1, 1).expand(-1, OBS_HEIGHT, OBS_WIDTH)
-        obs[:, 5] = time_plane.view(-1, 1, 1).expand(-1, OBS_HEIGHT, OBS_WIDTH)
+        obs[:, 5] = holdings_plane.view(-1, 1, 1).expand(-1, OBS_HEIGHT, OBS_WIDTH)
+        obs[:, 6] = unrealized_plane.view(-1, 1, 1).expand(-1, OBS_HEIGHT, OBS_WIDTH)
+        obs[:, 7] = time_plane.view(-1, 1, 1).expand(-1, OBS_HEIGHT, OBS_WIDTH)
         return obs
 
     def _price_window(self) -> torch.Tensor:
@@ -282,6 +308,7 @@ class TradingEnv(SimEnv):
             self.price_paths[env_index].copy_(price_path)
             self.cash[env_index] = INITIAL_CASH
             self.holdings[env_index] = 0.0
+            self.avg_entry_price[env_index] = 0.0
             self.last_trade_direction[env_index] = 0
 
     def _generate_price_path(self, company_id: int, generator: torch.Generator) -> torch.Tensor:
