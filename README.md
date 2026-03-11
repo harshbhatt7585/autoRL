@@ -90,6 +90,29 @@ git commit -m "Initial Simverse autoRL scaffold"
 
 Then point your coding agent at `program.md`.
 
+## How to run?
+
+First give all permission to codex so it can run without interruption
+
+As meontioned ins autoresearch you can spin the codex with this prompt and it will run continously
+
+```text
+Hi have a look at program.md and let's kick off a new experiment! let's do the setup first.
+
+```
+
+But I noticed that it stops after setting up, if it does then do this will continously trigger it even if it stops.
+
+```bash
+  nohup bash -lc '
+  while true; do
+    codex -a never -s workspace-write exec -C /Users/harshbhatt/Projects/autoRL "Continue the experiment loop in program.md from the current repo state. Read
+  results.tsv, keep working on candidate/env.py and candidate/train.py, run another experiment, update results.tsv, and do not stop after a single accepted
+  run. Only stop if the repo is broken or the process is interrupted."
+    sleep 2
+  done
+  ' > codex.out 2>&1 &
+```
 
 ## Citations and Thank You
   - [Autoresearch](https://github.com/karpathy/autoresearch)
