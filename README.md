@@ -1,7 +1,6 @@
 # autoRL
 
-This repo is for autonomous search over RL environments backed by a vendored
-copy of [`simverse`](https://github.com/harshbhatt7585/simverse).
+This repo is for autonomous research over RL environments runs over [`simverse`](https://github.com/harshbhatt7585/simverse).
 
 ## Design principles
 
