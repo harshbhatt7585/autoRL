@@ -14,7 +14,7 @@ SELL = 1
 REST = 2
 
 COMPANY_COUNT = 5
-CHANNEL_COUNT = 12
+CHANNEL_COUNT = 17
 OBS_HEIGHT = 1
 OBS_WIDTH = 25
 HISTORY_WINDOW = OBS_WIDTH
@@ -289,6 +289,10 @@ class TradingEnv(SimEnv):
             min=0.0,
             max=1.0,
         )
+        company_planes = (
+            self.company_id.unsqueeze(1)
+            == torch.arange(COMPANY_COUNT, device=self.device).unsqueeze(0)
+        ).to(dtype=self.dtype)
         obs[:, 2] = price_plane.view(-1, 1, 1).expand(-1, OBS_HEIGHT, OBS_WIDTH)
         obs[:, 3] = cash_plane.view(-1, 1, 1).expand(-1, OBS_HEIGHT, OBS_WIDTH)
         obs[:, 4] = exposure_plane.view(-1, 1, 1).expand(-1, OBS_HEIGHT, OBS_WIDTH)
@@ -299,6 +303,7 @@ class TradingEnv(SimEnv):
         obs[:, 9] = momentum_plane.view(-1, 1, 1).expand(-1, OBS_HEIGHT, OBS_WIDTH)
         obs[:, 10] = drawdown_plane.view(-1, 1, 1).expand(-1, OBS_HEIGHT, OBS_WIDTH)
         obs[:, 11] = time_plane.view(-1, 1, 1).expand(-1, OBS_HEIGHT, OBS_WIDTH)
+        obs[:, 12:] = company_planes.unsqueeze(-1).unsqueeze(-1).expand(-1, -1, OBS_HEIGHT, OBS_WIDTH)
         return obs
 
     def _price_window(self) -> torch.Tensor:
