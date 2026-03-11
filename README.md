@@ -85,11 +85,3 @@ git commit -m "Initial Simverse autoRL scaffold"
 
 Then point your coding agent at `program.md`.
 
-## Suggested next upgrades
-
-This scaffold is intentionally small. The next useful upgrades are:
-
-1. Promote the candidate into a full `simverse.envs.autorl_candidate` package.
-2. Add a novelty archive so repeated near-duplicate task variants are penalized.
-3. Emit replay JSON to the shared Simverse renderer for failure inspection.
-4. Split search into proposer and judge agents once the single-agent loop is stable.
