@@ -23,9 +23,10 @@ PRICE_SCALE = 40.0
 HOLDINGS_SCALE = 24.0
 TRADE_PENALTY = 0.0000
 FLIP_PENALTY = 0.0005
+RECENT_FLIP_WINDOW = 4
 INVALID_ACTION_PENALTY = 0.0100
-DENSE_REWARD_CLIP = 0.1000
-TERMINAL_REWARD_CLIP = 0.9000
+DENSE_REWARD_CLIP = 0.1200
+TERMINAL_REWARD_CLIP = 1.0000
 SUCCESS_MARGIN = 5.0
 
 
@@ -75,6 +76,15 @@ class TradingEnv(SimEnv):
         self.register_buffer(
             "last_trade_direction",
             torch.zeros(self.num_envs, dtype=torch.int64, device=self.device),
+        )
+        self.register_buffer(
+            "steps_since_trade",
+            torch.full(
+                (self.num_envs,),
+                fill_value=self.max_steps,
+                dtype=torch.int64,
+                device=self.device,
+            ),
         )
         self.register_buffer(
             "episode_counter",
@@ -140,9 +150,10 @@ class TradingEnv(SimEnv):
         valid_trade = valid_buy | valid_sell
         invalid_buy = (action_tensor == BUY) & (~valid_buy)
         invalid_sell = (action_tensor == SELL) & (~valid_sell)
-        flip_trade = (valid_buy & (self.last_trade_direction < 0)) | (
+        recent_trade = self.steps_since_trade <= RECENT_FLIP_WINDOW
+        flip_trade = recent_trade & ((valid_buy & (self.last_trade_direction < 0)) | (
             valid_sell & (self.last_trade_direction > 0)
-        )
+        ))
 
         buy_delta = valid_buy.to(dtype=self.dtype)
         sell_delta = valid_sell.to(dtype=self.dtype)
@@ -189,6 +200,13 @@ class TradingEnv(SimEnv):
             next_trade_direction,
         )
         self.last_trade_direction.copy_(next_trade_direction)
+        next_steps_since_trade = torch.clamp(self.steps_since_trade + 1, max=self.max_steps)
+        next_steps_since_trade = torch.where(
+            valid_trade,
+            torch.zeros_like(next_steps_since_trade),
+            next_steps_since_trade,
+        )
+        self.steps_since_trade.copy_(next_steps_since_trade)
 
         self.steps.add_(1)
         self.episode_length.add_(1)
@@ -336,6 +354,7 @@ class TradingEnv(SimEnv):
             self.holdings[env_index] = 0.0
             self.avg_entry_price[env_index] = 0.0
             self.last_trade_direction[env_index] = 0
+            self.steps_since_trade[env_index] = self.max_steps
 
     def _generate_price_path(self, company_id: int, generator: torch.Generator) -> torch.Tensor:
         # Each company family mixes one clean regime with mild seeded variation.
