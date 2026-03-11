@@ -14,7 +14,7 @@ SELL = 1
 REST = 2
 
 COMPANY_COUNT = 5
-CHANNEL_COUNT = 10
+CHANNEL_COUNT = 12
 OBS_HEIGHT = 1
 OBS_WIDTH = 25
 HISTORY_WINDOW = OBS_WIDTH
@@ -25,7 +25,7 @@ TRADE_PENALTY = 0.0000
 FLIP_PENALTY = 0.0005
 INVALID_ACTION_PENALTY = 0.0100
 DENSE_REWARD_CLIP = 0.0800
-TERMINAL_REWARD_CLIP = 0.6000
+TERMINAL_REWARD_CLIP = 0.7500
 SUCCESS_MARGIN = 5.0
 
 
@@ -256,6 +256,8 @@ class TradingEnv(SimEnv):
         recent_min = price_window.min(dim=1).values
         recent_max = price_window.max(dim=1).values
         recent_span = (recent_max - recent_min).clamp(min=1.0)
+        short_trend = price_window[:, -6:].mean(dim=1)
+        long_trend = price_window[:, -18:].mean(dim=1)
 
         price_plane = torch.clamp((current_price / PRICE_SCALE) - 0.75, min=-1.0, max=1.25)
         cash_plane = torch.clamp(self.cash / INITIAL_CASH, min=0.0, max=2.0)
@@ -276,6 +278,12 @@ class TradingEnv(SimEnv):
             min=-1.0,
             max=1.0,
         )
+        momentum_plane = torch.tanh(((short_trend / long_trend.clamp(min=1.0)) - 1.0) * 12.0)
+        drawdown_plane = torch.clamp(
+            ((current_price / recent_max.clamp(min=1.0)) - 1.0) * 6.0,
+            min=-1.0,
+            max=0.0,
+        )
         time_plane = torch.clamp(
             (self.max_steps - self.steps).to(dtype=self.dtype) / float(self.max_steps),
             min=0.0,
@@ -288,7 +296,9 @@ class TradingEnv(SimEnv):
         obs[:, 6] = unrealized_plane.view(-1, 1, 1).expand(-1, OBS_HEIGHT, OBS_WIDTH)
         obs[:, 7] = buying_power_plane.view(-1, 1, 1).expand(-1, OBS_HEIGHT, OBS_WIDTH)
         obs[:, 8] = range_position_plane.view(-1, 1, 1).expand(-1, OBS_HEIGHT, OBS_WIDTH)
-        obs[:, 9] = time_plane.view(-1, 1, 1).expand(-1, OBS_HEIGHT, OBS_WIDTH)
+        obs[:, 9] = momentum_plane.view(-1, 1, 1).expand(-1, OBS_HEIGHT, OBS_WIDTH)
+        obs[:, 10] = drawdown_plane.view(-1, 1, 1).expand(-1, OBS_HEIGHT, OBS_WIDTH)
+        obs[:, 11] = time_plane.view(-1, 1, 1).expand(-1, OBS_HEIGHT, OBS_WIDTH)
         return obs
 
     def _price_window(self) -> torch.Tensor:

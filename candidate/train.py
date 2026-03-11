@@ -8,9 +8,9 @@ import torch.nn as nn
 TASK_MAX_STEPS = 100
 TEMPORAL_CHANNELS = 32
 TEMPORAL_HIDDEN = 48
-SCALAR_HIDDEN = 56
+SCALAR_HIDDEN = 64
 SUMMARY_HIDDEN = 40
-SUMMARY_FEATURES = 12
+SUMMARY_FEATURES = 14
 HIDDEN_DIM = 128
 POLICY_HIDDEN = 96
 VALUE_HIDDEN = 128
@@ -95,6 +95,8 @@ class TradingPolicy(nn.Module):
                 price_history.mean(dim=-1),
                 recent_prices.max(dim=-1).values,
                 recent_prices.min(dim=-1).values,
+                price_history[:, -24:].max(dim=-1).values,
+                price_history[:, -24:].min(dim=-1).values,
                 return_history[:, -1],
                 return_history[:, -4:].mean(dim=-1),
                 return_history[:, -12:].mean(dim=-1),
