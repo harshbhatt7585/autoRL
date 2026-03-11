@@ -4,4 +4,4 @@ __pycache__/
 checkpoints/
 recordings/
 run.log
-results.tsv
+.log
