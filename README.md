@@ -1,5 +1,8 @@
 # autoRL
 
+![Agent performance by experiment](results/results_score_graph.png)
+
+
 This repo is for autonomous research over RL environments that run atop [`simverse`](https://github.com/harshbhatt7585/simverse).
 
 It can build RL environments and train it using a single `program.md` file.
