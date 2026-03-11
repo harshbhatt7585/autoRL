@@ -1,0 +1,26 @@
+commit	train_episodes	eval_episodes	max_steps	score	solve_rate	eval_return	status	description
+
+df86680	12	8	20	0.000000	0.000000	0.000000	discard	baseline empty canvas starter
+17ef019	12	8	100	0.257746	0.750000	0.257746	keep	trading candidate v1 balanced regimes
+17ef019	32	8	100	0.302162	0.687500	0.302162	keep	budget ladder baseline current trading v1
+c5e7dc0	32	8	100	0.307088	0.750000	0.307088	keep	temporal obs + 1d policy v2
+b4d7e8d	32	8	100	0.313420	0.750000	0.313420	keep	sharper regimes and zero trade tax v3
+b4d7e8d	64	12	100	0.502237	0.875000	0.502237	keep	budget ladder baseline current trading v3
+b4d7e8d	128	16	100	0.615444	1.000000	0.615444	keep	budget ladder baseline current trading v3
+e861cc6	128	16	100	0.643561	0.968750	0.643561	keep	clearer regimes plus summary policy v4
+34f8bd8	128	16	100	0.633890	0.937500	0.633890	discard	holdings scalar plus exploit ppo v5
+a8e6daf	128	16	100	0.788447	1.000000	0.788447	keep	canonical tougher regimes v6
+a8e6daf	256	24	100	0.796826	1.000000	0.796826	keep	budget ladder baseline current trading v6
+55440c0	256	24	100	0.908437	1.000000	0.908437	keep	inventory-friendly regimes v7
+55440c0	512	48	100	0.868592	1.000000	0.868592	keep	budget ladder baseline current trading v7
+9245b60	512	48	100	0.920457	1.000000	0.920457	keep	inventory-aware obs with holdings and unrealized pnl
+4273f90	512	48	100	0.929322	1.000000	0.929322	keep	drawdown-aware summary features with wider scalar branch
+d717281	128	16	100	0.818349	0.906250	0.818349	keep	screening baseline current trading v8
+7ac46b1	128	16	100	0.992772	1.000000	0.992772	keep	momentum and drawdown cues screening
+7ac46b1	256	24	100	1.059664	1.000000	1.059664	keep	budget ladder baseline current trading v9
+c9a584d	256	24	100	1.104792	1.000000	1.104792	keep	wider reward headroom and lower entropy v10
+2d896ec	256	24	100	1.095802	1.000000	1.095802	discard	ticker identity cue with wider scalar branch v11
+ca48eee	256	24	100	1.105941	1.000000	1.105941	keep	persist churn direction across rest
+6b4c620	256	24	100	1.105941	1.000000	1.105941	pending	persist churn direction across rest
+6b4c620	256	24	100	1.139534	1.000000	1.139534	pending	recency-gated churn penalty plus broader reward headroom
+6b4c620	256	24	100	1.139534	1.000000	1.139534	pending	recent flip window + wider reward headroom v12
