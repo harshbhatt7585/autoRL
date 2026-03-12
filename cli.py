@@ -64,11 +64,6 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_SLEEP_SECONDS,
         help=f"Sleep seconds between codex loop iterations (default: {DEFAULT_SLEEP_SECONDS}).",
     )
-    parser.add_argument(
-        "--from-start",
-        action="store_true",
-        help="Stream log from beginning instead of tailing from the end.",
-    )
     return parser.parse_args()
 
 
@@ -141,15 +136,14 @@ def _build_loop_command(
     )
 
 
-def _stream_log(log_path: Path, *, from_start: bool) -> None:
+def _stream_log(log_path: Path) -> None:
     print(
         _color("Streaming log", Style.green)
         + f" {log_path} "
         + _color("(Ctrl+C stops viewing; loop keeps running)", Style.dim)
     )
     with log_path.open("r", encoding="utf-8", errors="replace") as handle:
-        if not from_start:
-            handle.seek(0, 2)
+        handle.seek(0, 2)
         while True:
             line = handle.readline()
             if line:
@@ -158,7 +152,7 @@ def _stream_log(log_path: Path, *, from_start: bool) -> None:
             time.sleep(0.2)
 
 
-def _read_log_lines(log_path: Path, max_lines: int, *, from_start: bool) -> list[str]:
+def _read_log_lines(log_path: Path, max_lines: int) -> list[str]:
     try:
         text = log_path.read_text(encoding="utf-8", errors="replace")
     except FileNotFoundError:
@@ -167,8 +161,6 @@ def _read_log_lines(log_path: Path, max_lines: int, *, from_start: bool) -> list
         return [f"(failed reading log: {exc})"]
 
     lines = text.splitlines()
-    if from_start:
-        return lines[:max_lines]
     if len(lines) <= max_lines:
         return lines
     return lines[-max_lines:]
@@ -189,7 +181,6 @@ def _run_tui(
     log_path: Path,
     pid_path: Path,
     repo_path: Path,
-    from_start: bool,
 ) -> None:
     def _draw(stdscr: curses.window) -> None:
         curses.curs_set(0)
@@ -216,7 +207,7 @@ def _run_tui(
             log_top = 5
             footer_lines = 2
             log_height = max(4, height - log_top - footer_lines)
-            log_lines = _read_log_lines(log_path, log_height, from_start=from_start)
+            log_lines = _read_log_lines(log_path, log_height)
 
             stdscr.addstr(log_top - 1, 0, _truncate("Logs", width), curses.A_UNDERLINE)
             for idx, line in enumerate(log_lines[:log_height]):
@@ -280,13 +271,12 @@ def main() -> int:
         _print_kv("Log", str(log_path))
         try:
             if not (sys.stdout.isatty() and sys.stdin.isatty()):
-                _stream_log(log_path, from_start=args.from_start)
+                _stream_log(log_path)
             else:
                 _run_tui(
                     log_path=log_path,
                     pid_path=pid_path,
                     repo_path=repo_path,
-                    from_start=args.from_start,
                 )
         except KeyboardInterrupt:
             print()
@@ -316,13 +306,12 @@ def main() -> int:
 
     try:
         if not (sys.stdout.isatty() and sys.stdin.isatty()):
-            _stream_log(log_path, from_start=args.from_start)
+            _stream_log(log_path)
         else:
             _run_tui(
                 log_path=log_path,
                 pid_path=pid_path,
                 repo_path=repo_path,
-                from_start=args.from_start,
             )
     except KeyboardInterrupt:
         print()
