@@ -22,6 +22,51 @@ DEFAULT_PROMPT = (
     "accepted run. Only stop if the repo is broken or the process is interrupted."
 )
 
+LOGO_GLYPHS = {
+    "A": [
+        "   /\\   ",
+        "  /  \\  ",
+        " / /\\ \\ ",
+        "/ ____ \\",
+        "/_/  \\_\\",
+    ],
+    "U": [
+        "| |  | |",
+        "| |  | |",
+        "| |  | |",
+        "| |__| |",
+        " \\____/ ",
+    ],
+    "T": [
+        " ______ ",
+        "|__  __|",
+        "  | |   ",
+        "  | |   ",
+        "  |_|   ",
+    ],
+    "O": [
+        "  ____  ",
+        " / __ \\ ",
+        "| |  | |",
+        "| |__| |",
+        " \\____/ ",
+    ],
+    "R": [
+        " _____  ",
+        "|  __ \\ ",
+        "| |__) |",
+        "|  _  / ",
+        "|_| \\_\\ ",
+    ],
+    "L": [
+        " _      ",
+        "| |     ",
+        "| |     ",
+        "| |____ ",
+        "|______|",
+    ],
+}
+
 
 class Style:
     reset = "\033[0m"
@@ -78,8 +123,20 @@ def _color(text: str, tone: str) -> str:
 
 
 def _print_header() -> None:
+    word = "AUTORL"
+    height = len(LOGO_GLYPHS["A"])
+    logo_lines: list[str] = []
+    for row in range(height):
+        logo_lines.append("  ".join(LOGO_GLYPHS[ch][row] for ch in word))
+
+    width = max(len(line) for line in logo_lines)
+    border = "+" + "-" * (width + 2) + "+"
+
     print()
-    print(_color("autorl", Style.bold + Style.cyan))
+    print(_color(border, Style.bold + Style.cyan))
+    for line in logo_lines:
+        print(_color(f"| {line.ljust(width)} |", Style.bold + Style.cyan))
+    print(_color(border, Style.bold + Style.cyan))
     print(_color("run unattended Codex experiment loops", Style.dim))
     print()
 
