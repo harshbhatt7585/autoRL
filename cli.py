@@ -65,11 +65,6 @@ def parse_args() -> argparse.Namespace:
         help=f"Sleep seconds between codex loop iterations (default: {DEFAULT_SLEEP_SECONDS}).",
     )
     parser.add_argument(
-        "--prompt",
-        default=None,
-        help="Override the default codex prompt for this run.",
-    )
-    parser.add_argument(
         "--from-start",
         action="store_true",
         help="Stream log from beginning instead of tailing from the end.",
@@ -123,15 +118,6 @@ def _read_running_pid(pid_path: Path) -> int | None:
         return None
     pid = int(raw)
     return pid if _is_pid_running(pid) else None
-
-
-def _resolve_prompt(arg_prompt: str | None) -> str:
-    if arg_prompt is not None:
-        prompt = arg_prompt.strip()
-        if not prompt:
-            raise ValueError("--prompt cannot be empty.")
-        return prompt
-    return DEFAULT_PROMPT
 
 
 def _build_loop_command(
@@ -208,7 +194,6 @@ def _run_tui(
     log_path: Path,
     pid_path: Path,
     repo_path: Path,
-    prompt: str,
     from_start: bool,
 ) -> None:
     def _draw(stdscr: curses.window) -> None:
@@ -233,10 +218,7 @@ def _run_tui(
             stdscr.addstr(2, 0, _truncate(f"PID: {pid if pid is not None else 'stopped'}", width))
             stdscr.addstr(3, 0, _truncate(f"Log: {log_path}", width))
 
-            prompt_preview = textwrap.shorten(prompt, width=max(20, width - 10), placeholder=" ...")
-            stdscr.addstr(4, 0, _truncate(f"Prompt: {prompt_preview}", width))
-
-            log_top = 6
+            log_top = 5
             footer_lines = 2
             log_height = max(4, height - log_top - footer_lines)
             log_lines = _read_log_lines(log_path, log_height, from_start=from_start)
@@ -277,7 +259,6 @@ def main() -> int:
 
     if not args.start:
         print("Use `autorl --start` to launch the loop.")
-        print("Optional: `autorl --start --prompt \"...\"`")
         return 2
 
     _print_header()
@@ -291,7 +272,7 @@ def main() -> int:
     if not repo_path.is_dir():
         raise NotADirectoryError(f"Repository path is not a directory: {repo_path}")
 
-    prompt = _resolve_prompt(args.prompt)
+    prompt = DEFAULT_PROMPT
 
     log_path.parent.mkdir(parents=True, exist_ok=True)
     pid_path.parent.mkdir(parents=True, exist_ok=True)
@@ -310,7 +291,6 @@ def main() -> int:
                     log_path=log_path,
                     pid_path=pid_path,
                     repo_path=repo_path,
-                    prompt=prompt,
                     from_start=args.from_start,
                 )
         except KeyboardInterrupt:
@@ -323,7 +303,6 @@ def main() -> int:
     _print_kv("Log", str(log_path))
     _print_kv("PID file", str(pid_path))
     _print_kv("Sleep", str(args.sleep))
-    _print_kv("Prompt", prompt)
     print()
 
     loop_command = _build_loop_command(
@@ -348,7 +327,6 @@ def main() -> int:
                 log_path=log_path,
                 pid_path=pid_path,
                 repo_path=repo_path,
-                prompt=prompt,
                 from_start=args.from_start,
             )
     except KeyboardInterrupt:
