@@ -22,60 +22,76 @@ DEFAULT_PROMPT = (
     "accepted run. Only stop if the repo is broken or the process is interrupted."
 )
 
+# ── Redesigned blocky logo using full block / half-block characters ────────────
+#    Each glyph is 7 chars wide × 5 rows tall, drawn with █ ▀ ▄ ▌ ▐ ░
 LOGO_GLYPHS = {
     "A": [
-        "   /\\   ",
-        "  /  \\  ",
-        " / /\\ \\ ",
-        "/ ____ \\",
-        "/_/  \\_\\",
+        "  ███  ",
+        " █   █ ",
+        "███████",
+        "█     █",
+        "█     █",
     ],
     "U": [
-        "| |  | |",
-        "| |  | |",
-        "| |  | |",
-        "| |__| |",
-        " \\____/ ",
+        "█     █",
+        "█     █",
+        "█     █",
+        "█     █",
+        " █████ ",
     ],
     "T": [
-        " ______ ",
-        "|__  __|",
-        "  | |   ",
-        "  | |   ",
-        "  |_|   ",
+        "███████",
+        "  ███  ",
+        "  ███  ",
+        "  ███  ",
+        "  ███  ",
     ],
     "O": [
-        "  ____  ",
-        " / __ \\ ",
-        "| |  | |",
-        "| |__| |",
-        " \\____/ ",
+        " █████ ",
+        "█     █",
+        "█     █",
+        "█     █",
+        " █████ ",
     ],
     "R": [
-        " _____  ",
-        "|  __ \\ ",
-        "| |__) |",
-        "|  _  / ",
-        "|_| \\_\\ ",
+        "██████ ",
+        "█     █",
+        "██████ ",
+        "█   █  ",
+        "█    ██",
     ],
     "L": [
-        " _      ",
-        "| |     ",
-        "| |     ",
-        "| |____ ",
-        "|______|",
+        "█      ",
+        "█      ",
+        "█      ",
+        "█      ",
+        "███████",
     ],
 }
 
+# Tagline shown beneath the logo
+TAGLINE = "unattended  codex  experiment  loops"
+
+# Box-drawing characters
+_TL, _TR, _BL, _BR = "╔", "╗", "╚", "╝"
+_H, _V = "═", "║"
+_ML, _MR = "╠", "╣"          # mid-row left / right connectors
+
 
 class Style:
-    reset = "\033[0m"
-    bold = "\033[1m"
-    cyan = "\033[36m"
-    green = "\033[32m"
-    yellow = "\033[33m"
-    red = "\033[31m"
-    dim = "\033[2m"
+    reset  = "\033[0m"
+    bold   = "\033[1m"
+    dim    = "\033[2m"
+    italic = "\033[3m"
+    # foreground
+    cyan   = "\033[96m"
+    white  = "\033[97m"
+    green  = "\033[92m"
+    yellow = "\033[93m"
+    red    = "\033[91m"
+    grey   = "\033[37m"
+    # background accents
+    bg_dark = "\033[48;5;235m"
 
 
 def parse_args() -> argparse.Namespace:
@@ -112,38 +128,67 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+# ── colour helpers ────────────────────────────────────────────────────────────
+
 def _supports_color() -> bool:
     return sys.stdout.isatty() and os.getenv("TERM", "") != "dumb"
 
 
-def _color(text: str, tone: str) -> str:
+def _c(text: str, *codes: str) -> str:
     if not _supports_color():
         return text
-    return f"{tone}{text}{Style.reset}"
+    return "".join(codes) + text + Style.reset
 
+
+# ── header / banner ───────────────────────────────────────────────────────────
 
 def _print_header() -> None:
-    word = "AUTORL"
-    height = len(LOGO_GLYPHS["A"])
-    logo_lines: list[str] = []
-    for row in range(height):
-        logo_lines.append("  ".join(LOGO_GLYPHS[ch][row] for ch in word))
+    word   = "AUTORL"
+    glyphs = [LOGO_GLYPHS[ch] for ch in word]
+    height = len(glyphs[0])
 
-    width = max(len(line) for line in logo_lines)
-    border = "+" + "-" * (width + 2) + "+"
+    # assemble rows: glyphs separated by two spaces
+    logo_rows: list[str] = []
+    for row in range(height):
+        logo_rows.append("   ".join(g[row] for g in glyphs))
+
+    inner_w = max(len(r) for r in logo_rows)
+    inner_w = max(inner_w, len(TAGLINE) + 2)   # ensure tagline fits
+    box_w   = inner_w + 4                       # 2 side padding + 2 border chars
+
+    border_top    = _TL + _H * (box_w - 2) + _TR
+    border_bottom = _BL + _H * (box_w - 2) + _BR
+    divider       = _ML + _H * (box_w - 2) + _MR
 
     print()
-    print(_color(border, Style.bold + Style.cyan))
-    for line in logo_lines:
-        print(_color(f"| {line.ljust(width)} |", Style.bold + Style.cyan))
-    print(_color(border, Style.bold + Style.cyan))
-    print(_color("run unattended Codex experiment loops", Style.dim))
+    print(_c(border_top, Style.cyan, Style.bold))
+    # empty padding row
+    print(_c(_V + " " * (box_w - 2) + _V, Style.cyan, Style.bold))
+    for row in logo_rows:
+        padding = box_w - 2 - len(row)
+        lpad    = padding // 2
+        rpad    = padding - lpad
+        line    = _V + " " * lpad + row + " " * rpad + _V
+        print(_c(line, Style.cyan, Style.bold))
+    print(_c(_V + " " * (box_w - 2) + _V, Style.cyan, Style.bold))
+    print(_c(divider, Style.cyan, Style.bold))
+    # tagline row
+    tpad   = box_w - 2 - len(TAGLINE)
+    tlpad  = tpad // 2
+    trpad  = tpad - tlpad
+    tline  = _V + " " * tlpad + TAGLINE + " " * trpad + _V
+    print(_c(tline, Style.grey, Style.italic))
+    print(_c(border_bottom, Style.cyan, Style.bold))
     print()
 
 
 def _print_kv(label: str, value: str) -> None:
-    print(f"{_color(label + ':', Style.bold)} {value}")
+    bullet = _c("▸", Style.cyan, Style.bold)
+    key    = _c(label, Style.white, Style.bold)
+    print(f"  {bullet} {key}  {value}")
 
+
+# ── process helpers ───────────────────────────────────────────────────────────
 
 def _is_pid_running(pid: int) -> bool:
     if pid <= 0:
@@ -178,26 +223,27 @@ def _build_loop_command(
     if sleep_seconds < 1:
         raise ValueError("--sleep must be at least 1.")
 
-    repo_q = shlex.quote(str(repo))
+    repo_q   = shlex.quote(str(repo))
     prompt_q = shlex.quote(prompt)
-    log_q = shlex.quote(str(log_path))
-    pid_q = shlex.quote(str(pid_path))
-
-    return (
-        "nohup bash -lc '"
+    log_q    = shlex.quote(str(log_path))
+    pid_q    = shlex.quote(str(pid_path))
+    loop_script = (
         "while true; do "
         f"codex -a never -s workspace-write exec -C {repo_q} {prompt_q}; "
         f"sleep {sleep_seconds}; "
         "done"
-        f"' > {log_q} 2>&1 & echo $! > {pid_q}"
     )
+    loop_script_q = shlex.quote(loop_script)
+    return f"nohup bash -lc {loop_script_q} > {log_q} 2>&1 & echo $! > {pid_q}"
 
+
+# ── plain log stream (non-tty fallback) ───────────────────────────────────────
 
 def _stream_log(log_path: Path) -> None:
     print(
-        _color("Streaming log", Style.green)
-        + f" {log_path} "
-        + _color("(Ctrl+C stops viewing; loop keeps running)", Style.dim)
+        _c("  ▸ Streaming log", Style.green, Style.bold)
+        + _c(f"  {log_path}", Style.white)
+        + _c("  (Ctrl+C stops viewing; loop keeps running)", Style.dim)
     )
     with log_path.open("r", encoding="utf-8", errors="replace") as handle:
         handle.seek(0, 2)
@@ -209,6 +255,8 @@ def _stream_log(log_path: Path) -> None:
             time.sleep(0.2)
 
 
+# ── TUI ───────────────────────────────────────────────────────────────────────
+
 def _read_log_lines(log_path: Path, max_lines: int) -> list[str]:
     try:
         text = log_path.read_text(encoding="utf-8", errors="replace")
@@ -216,11 +264,8 @@ def _read_log_lines(log_path: Path, max_lines: int) -> list[str]:
         return ["(log file not found yet)"]
     except OSError as exc:
         return [f"(failed reading log: {exc})"]
-
     lines = text.splitlines()
-    if len(lines) <= max_lines:
-        return lines
-    return lines[-max_lines:]
+    return lines[-max_lines:] if len(lines) > max_lines else lines
 
 
 def _truncate(text: str, width: int) -> str:
@@ -228,58 +273,118 @@ def _truncate(text: str, width: int) -> str:
         return ""
     if len(text) <= width:
         return text
-    if width <= 1:
-        return text[:width]
-    return text[: width - 1] + "…"
+    return text[: width - 1] + "…" if width > 1 else text[:width]
 
 
-def _run_tui(
-    *,
-    log_path: Path,
-    pid_path: Path,
-    repo_path: Path,
-) -> None:
+def _run_tui(*, log_path: Path, pid_path: Path, repo_path: Path) -> None:
+
     def _draw(stdscr: curses.window) -> None:
+        curses.start_color()
+        curses.use_default_colors()
+        # colour pairs
+        curses.init_pair(1, curses.COLOR_CYAN,    -1)   # header / accents
+        curses.init_pair(2, curses.COLOR_GREEN,   -1)   # running status
+        curses.init_pair(3, curses.COLOR_YELLOW,  -1)   # warning / stopped
+        curses.init_pair(4, curses.COLOR_RED,     -1)   # error
+        curses.init_pair(5, curses.COLOR_WHITE,   -1)   # normal text
+        curses.init_pair(6, curses.COLOR_BLACK,   curses.COLOR_CYAN)   # footer bar
+
+        CY  = curses.color_pair(1)
+        GR  = curses.color_pair(2)
+        YL  = curses.color_pair(3)
+        RD  = curses.color_pair(4)
+        NM  = curses.color_pair(5)
+        FT  = curses.color_pair(6)
+
         curses.curs_set(0)
         stdscr.nodelay(True)
         stdscr.timeout(250)
 
-        status_line = "Running"
-        last_error = ""
+        status_text = "RUNNING"
+        last_error  = ""
+
+        SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+        spin_i  = 0
 
         while True:
             height, width = stdscr.getmaxyx()
             stdscr.erase()
 
-            pid = _read_running_pid(pid_path)
+            pid     = _read_running_pid(pid_path)
             running = pid is not None
-            now = datetime.now().strftime("%H:%M:%S")
-            header = f"autorl | {status_line} | {now}"
-            stdscr.addstr(0, 0, _truncate(header, width), curses.A_BOLD)
+            now     = datetime.now().strftime("%H:%M:%S")
 
-            stdscr.addstr(1, 0, _truncate(f"Repo: {repo_path}", width))
-            stdscr.addstr(2, 0, _truncate(f"PID: {pid if pid is not None else 'stopped'}", width))
-            stdscr.addstr(3, 0, _truncate(f"Log: {log_path}", width))
+            # ── title bar (row 0) ────────────────────────────────────────────
+            spinner = SPINNER[spin_i % len(SPINNER)] if running else "■"
+            spin_i += 1
 
-            log_top = 5
-            footer_lines = 2
-            log_height = max(4, height - log_top - footer_lines)
-            log_lines = _read_log_lines(log_path, log_height)
+            title   = f" AUTORL  {spinner}  {status_text}  "
+            ts      = f"  {now} "
+            gap     = width - len(title) - len(ts)
+            bar     = title + " " * max(gap, 0) + ts
+            try:
+                stdscr.addstr(0, 0, _truncate(bar, width), CY | curses.A_BOLD | curses.A_REVERSE)
+            except curses.error:
+                pass
 
-            stdscr.addstr(log_top - 1, 0, _truncate("Logs", width), curses.A_UNDERLINE)
-            for idx, line in enumerate(log_lines[:log_height]):
-                stdscr.addstr(log_top + idx, 0, _truncate(line, width))
+            # ── info rows (rows 1-4) ─────────────────────────────────────────
+            def kv(row: int, label: str, val: str, val_attr: int = NM) -> None:
+                try:
+                    stdscr.addstr(row, 2, label, CY | curses.A_BOLD)
+                    stdscr.addstr(row, 2 + len(label) + 1, _truncate(val, width - len(label) - 4), val_attr)
+                except curses.error:
+                    pass
 
-            footer = "Controls: q quit view | k kill loop"
-            stdscr.addstr(height - 2, 0, _truncate(footer, width), curses.A_REVERSE)
+            kv(1, "repo ▸", str(repo_path))
+            kv(2, "log  ▸", str(log_path))
+            pid_val  = str(pid) if pid else "stopped"
+            pid_attr = GR | curses.A_BOLD if running else YL
+            kv(3, "pid  ▸", pid_val, pid_attr)
+
+            # ── divider ──────────────────────────────────────────────────────
+            divider = "─" * (width - 2)
+            try:
+                stdscr.addstr(4, 1, _truncate(divider, width - 1), CY | curses.A_DIM)
+                stdscr.addstr(4, 1, "▼ logs", CY | curses.A_BOLD)
+            except curses.error:
+                pass
+
+            # ── log pane ─────────────────────────────────────────────────────
+            log_top    = 5
+            footer_row = height - 2
+            log_height = max(1, footer_row - log_top)
+            log_lines  = _read_log_lines(log_path, log_height)
+
+            for idx, line in enumerate(log_lines):
+                y = log_top + idx
+                if y >= footer_row:
+                    break
+                try:
+                    stdscr.addstr(y, 1, _truncate(line, width - 2), NM | curses.A_DIM)
+                except curses.error:
+                    pass
+
+            # ── footer ───────────────────────────────────────────────────────
+            controls = "  [q] quit view    [k] kill loop  "
+            try:
+                stdscr.addstr(footer_row, 0,
+                              _truncate(controls.ljust(width), width), FT | curses.A_BOLD)
+            except curses.error:
+                pass
+
             if last_error:
-                stdscr.addstr(height - 1, 0, _truncate(last_error, width), curses.A_BOLD)
+                try:
+                    stdscr.addstr(height - 1, 1,
+                                  _truncate(f"⚠  {last_error}", width - 2), RD | curses.A_BOLD)
+                except curses.error:
+                    pass
 
             stdscr.refresh()
 
+            # ── input ────────────────────────────────────────────────────────
             ch = stdscr.getch()
             if ch == -1:
-                status_line = "Running" if running else "Stopped"
+                status_text = "RUNNING" if running else "STOPPED"
                 continue
             if ch in (ord("q"), ord("Q")):
                 break
@@ -287,28 +392,31 @@ def _run_tui(
                 if running and pid is not None:
                     try:
                         os.kill(pid, 15)
-                        status_line = "Stopping"
-                        last_error = ""
+                        status_text = "STOPPING…"
+                        last_error  = ""
                     except OSError as exc:
-                        last_error = f"Kill failed: {exc}"
+                        last_error = f"kill failed: {exc}"
                 else:
                     last_error = "No running loop PID found."
 
     curses.wrapper(_draw)
 
 
+# ── entry point ───────────────────────────────────────────────────────────────
+
 def main() -> int:
     args = parse_args()
 
     if not args.start:
-        print("Use `autorl --start` to launch the loop.")
+        _print_header()
+        print(_c("  Use  autorl --start  to launch the loop.\n", Style.yellow))
         return 2
 
     _print_header()
 
     repo_path = Path(args.repo).expanduser().resolve()
-    log_path = Path(args.log).expanduser()
-    pid_path = Path(args.pid_file).expanduser()
+    log_path  = Path(args.log).expanduser()
+    pid_path  = Path(args.pid_file).expanduser()
 
     if not repo_path.exists():
         raise FileNotFoundError(f"Repository path does not exist: {repo_path}")
@@ -323,28 +431,25 @@ def main() -> int:
 
     existing_pid = _read_running_pid(pid_path)
     if existing_pid is not None:
-        print(_color("autorl loop already running.", Style.yellow))
-        _print_kv("PID", str(existing_pid))
-        _print_kv("Log", str(log_path))
+        print(_c("  ◆ Loop already running", Style.yellow, Style.bold))
+        _print_kv("PID",     str(existing_pid))
+        _print_kv("Log",     str(log_path))
+        print()
         try:
             if not (sys.stdout.isatty() and sys.stdin.isatty()):
                 _stream_log(log_path)
             else:
-                _run_tui(
-                    log_path=log_path,
-                    pid_path=pid_path,
-                    repo_path=repo_path,
-                )
+                _run_tui(log_path=log_path, pid_path=pid_path, repo_path=repo_path)
         except KeyboardInterrupt:
             print()
-            print(_color("Stopped log streaming. Background loop is still running.", Style.yellow))
+            print(_c("  Stopped log streaming. Background loop is still running.", Style.yellow))
         return 0
 
-    print(_color("Starting background loop...", Style.green))
-    _print_kv("Repo", str(repo_path))
-    _print_kv("Log", str(log_path))
+    print(_c("  ◆ Starting background loop…", Style.green, Style.bold))
+    _print_kv("Repo",     str(repo_path))
+    _print_kv("Log",      str(log_path))
     _print_kv("PID file", str(pid_path))
-    _print_kv("Sleep", str(args.sleep))
+    _print_kv("Sleep",    f"{args.sleep}s")
     print()
 
     loop_command = _build_loop_command(
@@ -356,8 +461,10 @@ def main() -> int:
     )
     subprocess.run(["bash", "-lc", loop_command], check=True)
 
-    pid_text = pid_path.read_text(encoding="utf-8").strip() if pid_path.exists() else "unknown"
-    print(_color("Started autorl background loop.", Style.green))
+    pid_text = (
+        pid_path.read_text(encoding="utf-8").strip() if pid_path.exists() else "unknown"
+    )
+    print(_c("  ◆ autorl loop started", Style.green, Style.bold))
     _print_kv("PID", pid_text)
     print()
 
@@ -365,14 +472,10 @@ def main() -> int:
         if not (sys.stdout.isatty() and sys.stdin.isatty()):
             _stream_log(log_path)
         else:
-            _run_tui(
-                log_path=log_path,
-                pid_path=pid_path,
-                repo_path=repo_path,
-            )
+            _run_tui(log_path=log_path, pid_path=pid_path, repo_path=repo_path)
     except KeyboardInterrupt:
         print()
-        print(_color("Stopped log streaming. Background loop is still running.", Style.yellow))
+        print(_c("  Stopped log streaming. Background loop is still running.", Style.yellow))
 
     return 0
 
