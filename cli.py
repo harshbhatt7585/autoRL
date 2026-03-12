@@ -69,11 +69,6 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Stream log from beginning instead of tailing from the end.",
     )
-    parser.add_argument(
-        "--plain",
-        action="store_true",
-        help="Disable full-screen TUI and use plain log streaming.",
-    )
     return parser.parse_args()
 
 
@@ -284,7 +279,7 @@ def main() -> int:
         _print_kv("PID", str(existing_pid))
         _print_kv("Log", str(log_path))
         try:
-            if args.plain or not (sys.stdout.isatty() and sys.stdin.isatty()):
+            if not (sys.stdout.isatty() and sys.stdin.isatty()):
                 _stream_log(log_path, from_start=args.from_start)
             else:
                 _run_tui(
@@ -320,7 +315,7 @@ def main() -> int:
     print()
 
     try:
-        if args.plain or not (sys.stdout.isatty() and sys.stdin.isatty()):
+        if not (sys.stdout.isatty() and sys.stdin.isatty()):
             _stream_log(log_path, from_start=args.from_start)
         else:
             _run_tui(
