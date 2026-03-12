@@ -1,6 +1,7 @@
 __pycache__/
 *.pyc
 .venv/
+autorl.egg-info/
 checkpoints/
 recordings/
 run.log
