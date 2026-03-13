@@ -94,7 +94,7 @@ class Style:
     bg_dark = "\033[48;5;235m"
 
 
-def parse_args() -> argparse.Namespace:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="autorl",
         description="Run an unattended Codex autoRL loop and stream codex.out live.",
@@ -125,7 +125,11 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_SLEEP_SECONDS,
         help=f"Sleep seconds between codex loop iterations (default: {DEFAULT_SLEEP_SECONDS}).",
     )
-    return parser.parse_args()
+    return parser
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    return build_parser().parse_args(argv)
 
 
 # ── colour helpers ────────────────────────────────────────────────────────────
@@ -186,6 +190,19 @@ def _print_kv(label: str, value: str) -> None:
     bullet = _c("▸", Style.cyan, Style.bold)
     key    = _c(label, Style.white, Style.bold)
     print(f"  {bullet} {key}  {value}")
+
+
+def _print_default_help(parser: argparse.ArgumentParser) -> None:
+    print(_c("  What autorl can do", Style.white, Style.bold))
+    _print_kv("Start loop", "`autorl --start` starts or re-attaches to the background loop.")
+    _print_kv("Watch logs", "Streams `codex.out` live (plain stream or interactive TUI).")
+    _print_kv("Change repo", "`--repo <path>` targets a different repository root.")
+    _print_kv("Tune runtime", "`--sleep <seconds>` changes delay between loop iterations.")
+    _print_kv("Custom files", "`--log` and `--pid-file` choose output and PID file paths.")
+    print()
+    print(_c("  Args", Style.white, Style.bold))
+    print(textwrap.indent(parser.format_help().rstrip(), "  "))
+    print()
 
 
 # ── process helpers ───────────────────────────────────────────────────────────
@@ -405,12 +422,13 @@ def _run_tui(*, log_path: Path, pid_path: Path, repo_path: Path) -> None:
 # ── entry point ───────────────────────────────────────────────────────────────
 
 def main() -> int:
-    args = parse_args()
+    parser = build_parser()
+    args = parser.parse_args()
 
     if not args.start:
         _print_header()
-        print(_c("  Use  autorl --start  to launch the loop.\n", Style.yellow))
-        return 2
+        _print_default_help(parser)
+        return 0
 
     _print_header()
 
