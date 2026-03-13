@@ -16,6 +16,9 @@ import textwrap
 DEFAULT_SLEEP_SECONDS = 2
 DEFAULT_LOG_PATH = "codex.out"
 DEFAULT_PID_PATH = ".log/autorl.pid"
+DEFAULT_SETUP_PROMPT = (
+    "Hi have a look at program.md and let's kick off a new experiment! let's do the setup first."
+)
 DEFAULT_PROMPT = (
     "Continue the experiment loop in program.md from the current repo state. "
     "Read results.tsv, keep working on candidate/env.py and candidate/train.py, "
@@ -331,11 +334,14 @@ def _build_loop_command(
     if sleep_seconds < 1:
         raise ValueError("--sleep must be at least 1.")
 
-    repo_q   = shlex.quote(str(repo))
-    prompt_q = shlex.quote(prompt)
-    log_q    = shlex.quote(str(log_path))
-    pid_q    = shlex.quote(str(pid_path))
+    repo_q         = shlex.quote(str(repo))
+    setup_prompt_q = shlex.quote(DEFAULT_SETUP_PROMPT)
+    prompt_q       = shlex.quote(prompt)
+    log_q          = shlex.quote(str(log_path))
+    pid_q          = shlex.quote(str(pid_path))
     loop_script = (
+        f"codex -a never -s workspace-write exec -C {repo_q} {setup_prompt_q}; "
+        f"sleep {sleep_seconds}; "
         "while true; do "
         f"codex -a never -s workspace-write exec -C {repo_q} {prompt_q}; "
         f"sleep {sleep_seconds}; "
