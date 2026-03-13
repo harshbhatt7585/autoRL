@@ -6,19 +6,21 @@ This repository is for autonomous search over RL environments.
 
 To set up a new run, work with the user to:
 
-1. **Agree on a run tag**: propose a short tag based on today's date, for example `mar10`. The branch `autorl/<tag>` should not already exist. This is a fresh run.
-2. **Create the branch**: create `autorl/<tag>` from the current main line.
-3. **Read the in-scope files**: the repo is small. Read these files for full context:
+1. **Agree on a run tag**: propose a short tag based on today's date, for example `mar10`. The branch `autorl/<tag>` should not already exist (`git branch --list 'autorl/<tag>'` should return nothing). This is a fresh run.
+2. **Switch to the main line**: move to the current main line branch before branching (for example `git checkout main`).
+3. **Create and switch to the run branch**: run `git checkout -b autorl/<tag>`.
+4. **Verify active branch before editing**: confirm `git branch --show-current` is exactly `autorl/<tag>`. Do not edit code on any other branch.
+5. **Read the in-scope files**: the repo is small. Read these files for full context:
    - `README.md` — repository context.
    - `framework.py` — fixed evaluator, fixed score, hard budget caps. Do not modify.
    - `train.py` — fixed entrypoint. Do not modify.
    - `candidate/env.py` — the candidate environment file you modify.
    - `candidate/train.py` — the env-specific policy and PPO tuning file you modify.
-4. **Verify the runtime exists**: confirm that `.venv` exists and that the vendored Simverse package is installed. If not, tell the human to run:
+6. **Verify the runtime exists**: confirm that `.venv` exists and that the vendored Simverse package is installed. If not, tell the human to run:
    - `python3 -m venv .venv`
    - `.venv/bin/pip install -e vendor/simverse`
-5. **Initialize `results.tsv`**: create it with just the header row if needed. The baseline will be recorded after the first run.
-6. **Confirm and go**: once setup looks good, kick off the experimentation.
+7. **Initialize `results.tsv`**: create it with just the header row if needed. The baseline will be recorded after the first run.
+8. **Confirm and go**: once setup looks good, kick off the experimentation.
 
 ## Build brief
 
