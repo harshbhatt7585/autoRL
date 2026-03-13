@@ -5,6 +5,7 @@ import curses
 from datetime import datetime
 import os
 from pathlib import Path
+import signal
 import shlex
 import subprocess
 import sys
@@ -99,10 +100,16 @@ def build_parser() -> argparse.ArgumentParser:
         prog="autorl",
         description="Run an unattended Codex autoRL loop and stream codex.out live.",
     )
-    parser.add_argument(
+    mode_group = parser.add_mutually_exclusive_group()
+    mode_group.add_argument(
         "--start",
         action="store_true",
         help="Start (or attach to) the autorl background loop.",
+    )
+    mode_group.add_argument(
+        "--stop",
+        action="store_true",
+        help="Stop the autorl background loop from the PID file.",
     )
     parser.add_argument(
         "--repo",
@@ -195,6 +202,7 @@ def _print_kv(label: str, value: str) -> None:
 def _print_default_help(parser: argparse.ArgumentParser) -> None:
     print(_c("  What autorl can do", Style.white, Style.bold))
     _print_kv("Start loop", "`autorl --start` starts or re-attaches to the background loop.")
+    _print_kv("Stop loop", "`autorl --stop` terminates the running loop from the PID file.")
     _print_kv("Watch logs", "Streams `codex.out` live (plain stream or interactive TUI).")
     _print_kv("Change repo", "`--repo <path>` targets a different repository root.")
     _print_kv("Tune runtime", "`--sleep <seconds>` changes delay between loop iterations.")
@@ -227,6 +235,89 @@ def _read_running_pid(pid_path: Path) -> int | None:
         return None
     pid = int(raw)
     return pid if _is_pid_running(pid) else None
+
+
+def _collect_descendant_pids(root_pid: int) -> set[int]:
+    try:
+        result = subprocess.run(
+            ["ps", "-Ao", "pid=,ppid="],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return set()
+
+    children_by_parent: dict[int, set[int]] = {}
+    for raw_line in result.stdout.splitlines():
+        parts = raw_line.strip().split()
+        if len(parts) != 2:
+            continue
+        pid_raw, ppid_raw = parts
+        if not (pid_raw.isdigit() and ppid_raw.isdigit()):
+            continue
+        pid_i = int(pid_raw)
+        ppid_i = int(ppid_raw)
+        children_by_parent.setdefault(ppid_i, set()).add(pid_i)
+
+    descendants: set[int] = set()
+    stack = list(children_by_parent.get(root_pid, set()))
+    while stack:
+        child_pid = stack.pop()
+        if child_pid in descendants:
+            continue
+        descendants.add(child_pid)
+        stack.extend(children_by_parent.get(child_pid, set()))
+    return descendants
+
+
+def _signal_loop_tree(root_pid: int, sig: signal.Signals) -> set[int]:
+    targets = _collect_descendant_pids(root_pid)
+    targets.add(root_pid)
+    for pid in sorted(targets, reverse=True):
+        try:
+            os.kill(pid, sig)
+        except ProcessLookupError:
+            continue
+        except OSError:
+            continue
+    return targets
+
+
+def _stop_loop(pid_path: Path, timeout_seconds: float = 5.0) -> tuple[bool, str]:
+    if not pid_path.exists():
+        return False, f"PID file not found: {pid_path}"
+
+    raw = pid_path.read_text(encoding="utf-8").strip()
+    if not raw.isdigit():
+        return False, f"Invalid PID file contents: {pid_path}"
+
+    pid = int(raw)
+    if not _is_pid_running(pid):
+        pid_path.unlink(missing_ok=True)
+        return True, f"Loop already stopped (stale PID {pid} removed)."
+
+    tracked_pids = _signal_loop_tree(pid, signal.SIGTERM)
+
+    deadline = time.time() + timeout_seconds
+    while time.time() < deadline:
+        if _is_pid_running(pid):
+            tracked_pids.update(_collect_descendant_pids(pid))
+        if not any(_is_pid_running(check_pid) for check_pid in tracked_pids):
+            pid_path.unlink(missing_ok=True)
+            return True, f"Loop stopped (PID {pid})."
+        time.sleep(0.2)
+
+    tracked_pids.update(_signal_loop_tree(pid, signal.SIGKILL))
+
+    deadline = time.time() + 2.0
+    while time.time() < deadline:
+        if not any(_is_pid_running(check_pid) for check_pid in tracked_pids):
+            pid_path.unlink(missing_ok=True)
+            return True, f"Loop force-stopped (PID {pid})."
+        time.sleep(0.2)
+
+    return False, f"Loop did not stop (PID {pid})."
 
 
 def _build_loop_command(
@@ -407,12 +498,9 @@ def _run_tui(*, log_path: Path, pid_path: Path, repo_path: Path) -> None:
                 break
             if ch in (ord("k"), ord("K")):
                 if running and pid is not None:
-                    try:
-                        os.kill(pid, 15)
-                        status_text = "STOPPING…"
-                        last_error  = ""
-                    except OSError as exc:
-                        last_error = f"kill failed: {exc}"
+                    stopped, message = _stop_loop(pid_path)
+                    status_text = "STOPPED" if stopped else "STOP FAILED"
+                    last_error = "" if stopped else message
                 else:
                     last_error = "No running loop PID found."
 
@@ -425,7 +513,7 @@ def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
 
-    if not args.start:
+    if not args.start and not args.stop:
         _print_header()
         _print_default_help(parser)
         return 0
@@ -435,6 +523,13 @@ def main() -> int:
     repo_path = Path(args.repo).expanduser().resolve()
     log_path  = Path(args.log).expanduser()
     pid_path  = Path(args.pid_file).expanduser()
+
+    if args.stop:
+        stopped, message = _stop_loop(pid_path)
+        color = Style.green if stopped else Style.red
+        print(_c(f"  ◆ {message}", color, Style.bold))
+        print()
+        return 0 if stopped else 1
 
     if not repo_path.exists():
         raise FileNotFoundError(f"Repository path does not exist: {repo_path}")
