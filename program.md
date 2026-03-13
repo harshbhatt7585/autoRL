@@ -6,8 +6,8 @@ This repository is for autonomous search over RL environments.
 
 To set up a new run, work with the user to:
 
-1. **Agree on a run tag**: propose a short tag based on today's date, for example `mar10`. If git is available, the branch `autorl/<tag>` should not already exist. This is a fresh run.
-2. **Create the branch**: if the repo is under git, create `autorl/<tag>` from the current main line. If the repo is not under git, tell the human that git is strongly recommended before long runs.
+1. **Agree on a run tag**: propose a short tag based on today's date, for example `mar10`. The branch `autorl/<tag>` should not already exist. This is a fresh run.
+2. **Create the branch**: create `autorl/<tag>` from the current main line.
 3. **Read the in-scope files**: the repo is small. Read these files for full context:
    - `README.md` — repository context.
    - `framework.py` — fixed evaluator, fixed score, hard budget caps. Do not modify.
