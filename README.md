@@ -114,7 +114,7 @@ But I noticed that it stops after setting up, if it does then do this will conti
   run. Only stop if the repo is broken or the process is interrupted."
     sleep 2
   done
-  ' > codex.out 2>&1 &
+  ' > .log/codex.log 2>&1 &
 ```
 
 ## Citations and Thank You

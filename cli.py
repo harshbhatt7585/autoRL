@@ -14,7 +14,7 @@ import textwrap
 
 
 DEFAULT_SLEEP_SECONDS = 2
-DEFAULT_LOG_PATH = "codex.out"
+DEFAULT_LOG_PATH = ".log/codex.log"
 DEFAULT_PID_PATH = ".log/autorl.pid"
 DEFAULT_SETUP_PROMPT = (
     "Hi have a look at program.md and let's kick off a new experiment! let's do the setup first."
@@ -101,7 +101,7 @@ class Style:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="autorl",
-        description="Run an unattended Codex autoRL loop and stream codex.out live.",
+        description="Run an unattended Codex autoRL loop and stream .log/codex.log live.",
     )
     mode_group = parser.add_mutually_exclusive_group()
     mode_group.add_argument(
@@ -206,7 +206,7 @@ def _print_default_help(parser: argparse.ArgumentParser) -> None:
     print(_c("  What autorl can do", Style.white, Style.bold))
     _print_kv("Start loop", "`autorl --start` starts or re-attaches to the background loop.")
     _print_kv("Stop loop", "`autorl --stop` terminates the running loop from the PID file.")
-    _print_kv("Watch logs", "Streams `codex.out` live (plain stream or interactive TUI).")
+    _print_kv("Watch logs", "Streams `.log/codex.log` live (plain stream or interactive TUI).")
     _print_kv("Change repo", "`--repo <path>` targets a different repository root.")
     _print_kv("Tune runtime", "`--sleep <seconds>` changes delay between loop iterations.")
     _print_kv("Custom files", "`--log` and `--pid-file` choose output and PID file paths.")
@@ -238,6 +238,29 @@ def _read_running_pid(pid_path: Path) -> int | None:
         return None
     pid = int(raw)
     return pid if _is_pid_running(pid) else None
+
+
+def _normalize_log_path(path: Path) -> Path:
+    """Normalize legacy log paths to the .log convention."""
+    raw = str(path)
+    if raw == "codex.out":
+        return Path(DEFAULT_LOG_PATH)
+    if path.suffix == ".out":
+        return path.with_suffix(".log")
+    return path
+
+
+def _resolve_existing_log_path(path: Path) -> Path:
+    """Prefer an existing .log file when a legacy .out path is passed in."""
+    normalized = _normalize_log_path(path)
+    if normalized.exists():
+        return normalized
+    if path.exists():
+        return path
+    default_path = Path(DEFAULT_LOG_PATH)
+    if default_path.exists():
+        return default_path
+    return normalized
 
 
 def _collect_descendant_pids(root_pid: int) -> set[int]:
@@ -527,7 +550,7 @@ def main() -> int:
     _print_header()
 
     repo_path = Path(args.repo).expanduser().resolve()
-    log_path  = Path(args.log).expanduser()
+    log_path  = _normalize_log_path(Path(args.log).expanduser())
     pid_path  = Path(args.pid_file).expanduser()
 
     if args.stop:
@@ -550,6 +573,7 @@ def main() -> int:
 
     existing_pid = _read_running_pid(pid_path)
     if existing_pid is not None:
+        log_path = _resolve_existing_log_path(log_path)
         print(_c("  ◆ Loop already running", Style.yellow, Style.bold))
         _print_kv("PID",     str(existing_pid))
         _print_kv("Log",     str(log_path))
