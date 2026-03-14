@@ -17,8 +17,8 @@ To set up a new run, work with the user to:
    - `candidate/env.py` — the candidate environment file you modify.
    - `candidate/train.py` — the env-specific policy and PPO tuning file you modify.
 6. **Verify the runtime exists**: confirm that `.venv` exists and that the vendored Simverse package is installed. If not, tell the human to run:
-   - `python3 -m venv .venv`
-   - `.venv/bin/pip install -e vendor/simverse`
+   - `uv venv`
+   - `uv pip install -e vendor/simverse`
 7. **Initialize `results.tsv`**: create it with just the header row if needed. The baseline will be recorded after the first run.
 8. **Confirm and go**: once setup looks good, kick off the experimentation.
 
@@ -56,7 +56,7 @@ episodes and all seeds. Other reported metrics are diagnostics only.
 Each experiment runs with an **agent-chosen episode budget**. You launch it as:
 
 ```bash
-.venv/bin/python train.py --train-episodes <n> --eval-episodes <m>
+uv run python train.py --train-episodes <n> --eval-episodes <m>
 ```
 
 The evaluator has hard caps and fixed runtime settings:
@@ -359,7 +359,7 @@ LOOP FOREVER:
 2. Start with a small budget if this is a fresh run. If the accepted candidate is already strong at the current budget, ratchet upward and re-baseline the accepted commit first.
 3. Tune `candidate/env.py`, `candidate/train.py`, or both with one experimental idea.
 4. Commit the experiment if git is available.
-5. Run the experiment: `.venv/bin/python train.py --train-episodes <n> --eval-episodes <m> --description "<idea>" > run.log 2>&1`
+5. Run the experiment: `uv run python train.py --train-episodes <n> --eval-episodes <m> --description "<idea>" > run.log 2>&1`
 6. Read out the results: `grep "^score:\|^mean_solve_rate:\|^mean_eval_return:\|^train_episodes:\|^eval_episodes:\|^max_steps:" run.log`
 7. If the grep output is empty, the run crashed. Read `tail -n 50 run.log`, decide whether the bug is easy to fix, and either retry or mark the idea as a crash.
 8. Confirm the row was written to `results.tsv`, then update its status to `keep` or `discard` if needed.

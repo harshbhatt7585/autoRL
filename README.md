@@ -42,17 +42,17 @@ longer affect the score.
 
 ## Quick start
 
-Create a local virtual environment and install the vendored Simverse package:
+Create a local virtual environment and install the vendored Simverse package with uv:
 
 ```bash
-python3 -m venv .venv
-.venv/bin/pip install -e vendor/simverse
+uv venv
+uv pip install -e vendor/simverse
 ```
 
 Run the fixed evaluator through that virtualenv:
 
 ```bash
-.venv/bin/python train.py
+uv run python train.py
 ```
 
 Each run appends a summary row to `results.tsv`. You can also pass
