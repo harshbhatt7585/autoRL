@@ -114,6 +114,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Stop the autorl background loop from the PID file.",
     )
+    mode_group.add_argument(
+        "--live",
+        action="store_true",
+        help="Stream logs live without starting or stopping the loop.",
+    )
     parser.add_argument(
         "--repo",
         default=str(Path.cwd()),
@@ -206,7 +211,7 @@ def _print_default_help(parser: argparse.ArgumentParser) -> None:
     print(_c("  What autorl can do", Style.white, Style.bold))
     _print_kv("Start loop", "`autorl --start` starts or re-attaches to the background loop.")
     _print_kv("Stop loop", "`autorl --stop` terminates the running loop from the PID file.")
-    _print_kv("Watch logs", "Streams `.log/codex.log` live (plain stream or interactive TUI).")
+    _print_kv("Watch logs", "`autorl --live` streams logs (plain stream or interactive TUI).")
     _print_kv("Change repo", "`--repo <path>` targets a different repository root.")
     _print_kv("Tune runtime", "`--sleep <seconds>` changes delay between loop iterations.")
     _print_kv("Custom files", "`--log` and `--pid-file` choose output and PID file paths.")
@@ -542,7 +547,7 @@ def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
 
-    if not args.start and not args.stop:
+    if not args.start and not args.stop and not args.live:
         _print_header()
         _print_default_help(parser)
         return 0
@@ -559,6 +564,30 @@ def main() -> int:
         print(_c(f"  ◆ {message}", color, Style.bold))
         print()
         return 0 if stopped else 1
+
+    if args.live:
+        log_path = _resolve_existing_log_path(log_path)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_path.touch(exist_ok=True)
+
+        existing_pid = _read_running_pid(pid_path)
+        if existing_pid is not None:
+            print(_c("  ◆ Live view attached to running loop", Style.green, Style.bold))
+            _print_kv("PID", str(existing_pid))
+        else:
+            print(_c("  ◆ Live view (no running loop PID found)", Style.yellow, Style.bold))
+        _print_kv("Log", str(log_path))
+        print()
+
+        try:
+            if not (sys.stdout.isatty() and sys.stdin.isatty()):
+                _stream_log(log_path)
+            else:
+                _run_tui(log_path=log_path, pid_path=pid_path, repo_path=repo_path)
+        except KeyboardInterrupt:
+            print()
+            print(_c("  Stopped log streaming.", Style.yellow))
+        return 0
 
     if not repo_path.exists():
         raise FileNotFoundError(f"Repository path does not exist: {repo_path}")
