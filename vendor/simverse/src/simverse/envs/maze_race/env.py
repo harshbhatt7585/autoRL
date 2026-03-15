@@ -63,6 +63,17 @@ class MazeRaceTorchEnv(SimEnv):
             goal_maps[idx, gy, gx] = 1.0
 
         self.register_buffer("goal_maps", goal_maps)
+        self.static_obs_channels = 1 + self.num_agents
+        static_obs = torch.zeros(
+            self.static_obs_channels,
+            self.height,
+            self.width,
+            dtype=self.dtype,
+        )
+        static_obs[0].copy_(self.wall_map[0])
+        for idx in range(self.num_agents):
+            static_obs[1 + idx].copy_(self.goal_maps[idx])
+        self.register_buffer("static_obs", static_obs)
 
         self.register_buffer(
             "agent_pos", torch.zeros(self.num_envs, self.num_agents, 2, dtype=torch.int64)
@@ -84,11 +95,20 @@ class MazeRaceTorchEnv(SimEnv):
             ),
         )
         self.register_buffer("env_idx", torch.arange(self.num_envs, dtype=torch.int64))
+        self.register_buffer(
+            "last_obs_agent_pos",
+            torch.zeros(self.num_envs, self.num_agents, 2, dtype=torch.int64),
+        )
+        self.register_buffer(
+            "last_obs_agent_visible",
+            torch.zeros(self.num_envs, self.num_agents, dtype=torch.bool),
+        )
 
         self.register_buffer("delta_x", torch.tensor([0, 0, 0, -1, 1], dtype=torch.int64))
         self.register_buffer("delta_y", torch.tensor([0, -1, 1, 0, 0], dtype=torch.int64))
 
         self.to(self.device)
+        self._initialize_static_observation_channels()
 
     @property
     def action_space(self):
@@ -111,6 +131,7 @@ class MazeRaceTorchEnv(SimEnv):
             self.agent_pos[:, idx, 0] = sx
             self.agent_pos[:, idx, 1] = sy
         self._reset_episode_state(winner_none=self.WINNER_NONE)
+        self._reset_dynamic_observation_channels()
         return self._get_observation()
 
     def step(
@@ -181,7 +202,7 @@ class MazeRaceTorchEnv(SimEnv):
 
         obs = self._get_observation()
         info = self._build_info()
-        return obs, rewards, self.done.clone(), info
+        return obs, rewards, self._payload_value(self.done), info
 
     def _normalize_actions(self, actions: torch.Tensor | None) -> torch.Tensor:
         return self._normalize_action_matrix(actions)
@@ -207,21 +228,46 @@ class MazeRaceTorchEnv(SimEnv):
         walls[self.goal1[1], self.goal1[0]] = False
         return walls
 
-    def _get_observation(self) -> Dict[str, torch.Tensor]:
-        self.obs_buffer.zero_()
+    def _initialize_static_observation_channels(self) -> None:
+        self.obs_buffer[:, : self.static_obs_channels].copy_(
+            self.static_obs.unsqueeze(0).expand(self.num_envs, -1, -1, -1)
+        )
 
-        self.obs_buffer[:, 0].copy_(self.wall_map.expand(self.num_envs, -1, -1))
-        for idx in range(self.num_agents):
-            goal_map = self.goal_maps[idx].unsqueeze(0).expand(self.num_envs, -1, -1)
-            self.obs_buffer[:, 1 + idx].copy_(goal_map)
+    def _get_observation(self) -> Dict[str, torch.Tensor]:
+        previous_env_idx, previous_agent_idx = torch.nonzero(
+            self.last_obs_agent_visible,
+            as_tuple=True,
+        )
+        if previous_env_idx.numel() > 0:
+            previous_y = self.last_obs_agent_pos[previous_env_idx, previous_agent_idx, 1]
+            previous_x = self.last_obs_agent_pos[previous_env_idx, previous_agent_idx, 0]
             self.obs_buffer[
-                self.env_idx,
-                1 + self.num_agents + idx,
-                self.agent_pos[:, idx, 1],
-                self.agent_pos[:, idx, 0],
-            ] = 1.0
+                previous_env_idx,
+                self.static_obs_channels + previous_agent_idx,
+                previous_y,
+                previous_x,
+            ] = 0.0
+
+        visible = torch.ones_like(self.last_obs_agent_visible)
+        visible_env_idx, visible_agent_idx = torch.nonzero(visible, as_tuple=True)
+        current_y = self.agent_pos[visible_env_idx, visible_agent_idx, 1]
+        current_x = self.agent_pos[visible_env_idx, visible_agent_idx, 0]
+        self.obs_buffer[
+            visible_env_idx,
+            self.static_obs_channels + visible_agent_idx,
+            current_y,
+            current_x,
+        ] = 1.0
+
+        self.last_obs_agent_pos.copy_(self.agent_pos)
+        self.last_obs_agent_visible.copy_(visible)
 
         return self._pack_observation_dict(self.obs_buffer)
+
+    def _reset_dynamic_observation_channels(self) -> None:
+        self.obs_buffer[:, self.static_obs_channels :].zero_()
+        self.last_obs_agent_pos.zero_()
+        self.last_obs_agent_visible.zero_()
 
 
 MazeRaceEnv = MazeRaceTorchEnv

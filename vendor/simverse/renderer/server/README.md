@@ -6,6 +6,11 @@ Single server entrypoint:
 - `server/main.py` - central FastAPI app.
 
 Routers:
+- `server/battle_grid/router.py` - battle grid endpoints mounted under `/battle-grid`:
+  - `GET /battle-grid/`
+  - `GET /battle-grid/snapshot`
+  - `GET /battle-grid/replays`
+  - `GET /battle-grid/replays/{replay_id}`
 - `server/snake/router.py` - snake endpoints mounted under `/snake`:
   - `GET /snake/`
   - `GET /snake/snapshot`

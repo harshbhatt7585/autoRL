@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import gymnasium as gym
 import numpy as np
 import torch
 import torch.nn as nn
@@ -51,6 +52,29 @@ class ConstantPolicy(nn.Module):
         batch_size = int(obs.shape[0]) if obs.ndim > 0 else 1
         logits = torch.zeros((batch_size, 1), dtype=torch.float32, device=obs.device)
         value = torch.zeros((batch_size, 1), dtype=torch.float32, device=obs.device)
+        return logits, value
+
+
+class FeatureAwareConstantPolicy(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.feature_batches: list[torch.Tensor] = []
+
+    def forward(
+        self,
+        obs: torch.Tensor,
+        features: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        del obs
+        if features is not None:
+            self.feature_batches.append(features.detach().cpu())
+            batch_size = int(features.shape[0])
+            device = features.device
+        else:
+            batch_size = 1
+            device = torch.device("cpu")
+        logits = torch.zeros((batch_size, 1), dtype=torch.float32, device=device)
+        value = torch.zeros((batch_size, 1), dtype=torch.float32, device=device)
         return logits, value
 
 
@@ -123,6 +147,53 @@ class LegacyVectorEnv:
         return obs, reward, terminated, truncated, {"step": self.step_calls}
 
 
+class TorchFeatureEnv(SimEnv):
+    def __init__(self) -> None:
+        super().__init__(device="cpu", dtype=torch.float32)
+        self.num_envs = 2
+        self.num_agents = 2
+        self.config = SimpleNamespace(max_steps=1)
+        self._observation_space = gym.spaces.Dict(
+            {
+                "obs": gym.spaces.Box(low=0.0, high=1.0, shape=(1, 2, 2), dtype=np.float32),
+                "features": gym.spaces.Box(low=0.0, high=1.0, shape=(3,), dtype=np.float32),
+            }
+        )
+        self._action_space = SimpleNamespace(n=1)
+        self.agents = []
+        self.register_buffer("done", torch.zeros(self.num_envs, dtype=torch.bool))
+
+    @property
+    def action_space(self):
+        return self._action_space
+
+    @property
+    def observation_space(self):
+        return self._observation_space
+
+    def assign_agents(self, agents: list[DummyAgent]) -> None:
+        self.agents = list(agents)
+
+    def reset(self) -> dict[str, torch.Tensor]:
+        self.done.zero_()
+        return {
+            "obs": torch.zeros((self.num_envs, 1, 2, 2), dtype=self.dtype),
+            "features": torch.ones((self.num_envs, 3), dtype=self.dtype),
+        }
+
+    def step(
+        self, actions: torch.Tensor
+    ) -> tuple[dict[str, torch.Tensor], torch.Tensor, torch.Tensor, dict[str, int]]:
+        del actions
+        self.done.fill_(True)
+        obs = {
+            "obs": torch.zeros((self.num_envs, 1, 2, 2), dtype=self.dtype),
+            "features": torch.full((self.num_envs, 3), 2.0, dtype=self.dtype),
+        }
+        reward = torch.zeros((self.num_envs, self.num_agents), dtype=self.dtype)
+        return obs, reward, self.done.clone(), {"step": 1}
+
+
 def make_agent(agent_id: int, policy: nn.Module, env) -> DummyAgent:
     del env
     return DummyAgent(agent_id=agent_id, action_space=np.array([0], dtype=np.int64), policy=policy)
@@ -130,6 +201,7 @@ def make_agent(agent_id: int, policy: nn.Module, env) -> DummyAgent:
 
 def test_simulator_run_uses_tensor_action_matrix_for_torch_multi_agent_env() -> None:
     env = TorchMultiAgentEnv()
+    assert env.clone_payload_tensors is False
     simulator = Simulator(
         env=env,
         num_agents=2,
@@ -146,6 +218,7 @@ def test_simulator_run_uses_tensor_action_matrix_for_torch_multi_agent_env() -> 
     assert first_actions.shape == (2, 2)
     assert first_actions.dtype == torch.int64
     assert torch.equal(first_actions, torch.zeros((2, 2), dtype=torch.int64))
+    assert env.clone_payload_tensors is False
 
 
 def test_simulator_run_falls_back_to_legacy_action_dicts() -> None:
@@ -162,3 +235,23 @@ def test_simulator_run_falls_back_to_legacy_action_dicts() -> None:
 
     assert len(env.actions_seen) == 2
     assert env.actions_seen[0] == [{0: 0, 1: 0}, {0: 0, 1: 0}]
+
+
+def test_simulator_run_passes_feature_vectors_to_policy() -> None:
+    env = TorchFeatureEnv()
+    policy0 = FeatureAwareConstantPolicy()
+    policy1 = FeatureAwareConstantPolicy()
+    simulator = Simulator(
+        env=env,
+        num_agents=2,
+        policies=[policy0, policy1],
+        loss_trainer=NoOpTrainer(),
+        agent_factory=make_agent,
+    )
+
+    simulator.run()
+
+    assert len(policy0.feature_batches) == 1
+    assert len(policy1.feature_batches) == 1
+    assert tuple(policy0.feature_batches[0].shape) == (2, 3)
+    assert torch.equal(policy0.feature_batches[0], torch.ones((2, 3)))

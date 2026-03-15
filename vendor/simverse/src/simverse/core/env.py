@@ -14,6 +14,9 @@ class SimEnv(nn.Module, ABC):
         super().__init__()
         self.device = torch.device(device)
         self.dtype = dtype
+        # Default to returning live buffers for throughput. Callers that need
+        # stable snapshots can opt into defensive copies.
+        self.clone_payload_tensors = False
 
     @property
     @abstractmethod
@@ -150,26 +153,36 @@ class SimEnv(nn.Module, ABC):
         clone_obs: bool = False,
         extra: Mapping[str, Any] | None = None,
     ) -> Dict[str, Any]:
-        payload: Dict[str, Any] = {"obs": obs.clone() if clone_obs else obs}
+        payload: Dict[str, Any] = {"obs": obs.clone() if clone_obs else self._payload_value(obs)}
         if hasattr(self, "done"):
-            payload["done"] = self.done.clone()
+            payload["done"] = self._payload_value(self.done)
         if hasattr(self, "winner"):
-            payload["winner"] = self.winner.clone()
+            payload["winner"] = self._payload_value(self.winner)
         if hasattr(self, "steps"):
-            payload["steps"] = self.steps.clone()
+            payload["steps"] = self._payload_value(self.steps)
         if extra:
-            payload.update(dict(extra))
+            for key, value in extra.items():
+                payload[key] = self._payload_value(value)
         return payload
 
     def _build_info(self, *, extra: Mapping[str, Any] | None = None) -> Dict[str, Any]:
         info: Dict[str, Any] = {}
         if hasattr(self, "winner"):
-            info["winner"] = self.winner.clone()
+            info["winner"] = self._payload_value(self.winner)
         if hasattr(self, "steps"):
-            info["steps"] = self.steps.clone()
+            info["steps"] = self._payload_value(self.steps)
         if extra:
-            info.update(dict(extra))
+            for key, value in extra.items():
+                info[key] = self._payload_value(value)
         return info
+
+    def set_fast_payload_mode(self, enabled: bool) -> None:
+        self.clone_payload_tensors = not bool(enabled)
+
+    def _payload_value(self, value: Any) -> Any:
+        if isinstance(value, torch.Tensor) and self.clone_payload_tensors:
+            return value.clone()
+        return value
 
     def to(self, *args, **kwargs):
         super().to(*args, **kwargs)

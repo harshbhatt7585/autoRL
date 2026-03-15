@@ -22,8 +22,10 @@ export function mazeFrameToGridModel(frame: GenericFrame | null): GridRenderMode
   }
 
   const walls = obs[0]
-  const goal = obs[1]
-  const agent = obs[2]
+  const sharedLayers = obs.slice(1)
+  const goalLayerCount = Math.max(1, Math.floor(sharedLayers.length / 2))
+  const goalLayers = sharedLayers.slice(0, goalLayerCount)
+  const agentLayers = sharedLayers.slice(goalLayerCount)
 
   const height = walls.length
   const width = height > 0 ? walls[0].length : 0
@@ -42,8 +44,16 @@ export function mazeFrameToGridModel(frame: GenericFrame | null): GridRenderMode
       inactiveColor: MAZE_COLORS.floor,
     },
     overlays: [
-      { cells: goal, color: MAZE_COLORS.goal, inset: 2 },
-      { cells: agent, color: MAZE_COLORS.agent, inset: 2 },
+      ...goalLayers.map((goalLayer) => ({
+        cells: goalLayer,
+        color: MAZE_COLORS.goal,
+        inset: 2,
+      })),
+      ...agentLayers.map((agentLayer) => ({
+        cells: agentLayer,
+        color: MAZE_COLORS.agent,
+        inset: 2,
+      })),
     ],
   }
 }

@@ -6,3 +6,7 @@ recordings/
 .ruff_cache
 .venv-agent
 src/simverse.egg-info/
+docs/benchmarks/.cache/
+docs/benchmarks/.mpl-cache/
+docs/benchmarks/training_runtime_*.json
+docs/benchmarks/training_runtime_*.png

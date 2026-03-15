@@ -66,7 +66,8 @@ class BattleGridTorchEnv(SimEnv):
         )
         self.register_buffer("env_idx", torch.arange(self.num_envs, dtype=torch.int64))
 
-        self.obs_channels = 5
+        self.obs_channels = 2
+        self.feature_dim = 3
         self.register_buffer(
             "obs_buffer",
             torch.zeros(
@@ -77,9 +78,38 @@ class BattleGridTorchEnv(SimEnv):
                 dtype=self.dtype,
             ),
         )
+        self.register_buffer(
+            "feature_buffer",
+            torch.zeros(self.num_envs, self.feature_dim, dtype=self.dtype),
+        )
+        self.register_buffer(
+            "last_obs_agent_pos",
+            torch.zeros(self.num_envs, self.num_agents, 2, dtype=torch.int64),
+        )
+        self.register_buffer(
+            "last_obs_agent_visible",
+            torch.zeros(self.num_envs, self.num_agents, dtype=torch.bool),
+        )
 
         self.register_buffer("delta_x", torch.tensor([0, 0, 0, -1, 1, 0], dtype=torch.int64))
         self.register_buffer("delta_y", torch.tensor([0, -1, 1, 0, 0, 0], dtype=torch.int64))
+
+        self._observation_space = gym.spaces.Dict(
+            {
+                "obs": gym.spaces.Box(
+                    low=0.0,
+                    high=1.0,
+                    shape=(self.obs_channels, self.height, self.width),
+                    dtype=np.float32,
+                ),
+                "features": gym.spaces.Box(
+                    low=0.0,
+                    high=1.0,
+                    shape=(self.feature_dim,),
+                    dtype=np.float32,
+                ),
+            }
+        )
 
         self.to(self.device)
 
@@ -89,12 +119,7 @@ class BattleGridTorchEnv(SimEnv):
 
     @property
     def observation_space(self):
-        return gym.spaces.Box(
-            low=0.0,
-            high=1.0,
-            shape=(self.obs_channels, self.height, self.width),
-            dtype=np.float32,
-        )
+        return self._observation_space
 
     def assign_agents(self, agents: list[BattleGridAgent]) -> None:
         self._assign_agents(agents, label="BattleGrid")
@@ -103,6 +128,7 @@ class BattleGridTorchEnv(SimEnv):
         self._reset_episode_state(winner_none=self.WINNER_NONE)
         self.health.fill_(self.max_health)
         self._spawn_unique_positions()
+        self._reset_observation_cache()
         return self._get_observation()
 
     def step(
@@ -112,46 +138,54 @@ class BattleGridTorchEnv(SimEnv):
         rewards = self._empty_rewards()
         active = ~self.done
 
-        old_pos = self.agent_pos.clone()
-        proposed_pos = self.agent_pos.clone()
+        alive_before0 = self.health[:, 0] > 0
+        alive_before1 = self.health[:, 1] > 0
+        current_x = [self.agent_pos[:, agent_id, 0] for agent_id in range(self.num_agents)]
+        current_y = [self.agent_pos[:, agent_id, 1] for agent_id in range(self.num_agents)]
+        next_x: list[torch.Tensor] = []
+        next_y: list[torch.Tensor] = []
 
         for agent_id in range(self.num_agents):
             action = action_tensor[:, agent_id]
             action_idx = torch.clamp(action, min=0, max=self.ACTION_ATTACK)
-            has_action = action >= 0
-            alive = self.health[:, agent_id] > 0
-            can_act = active & alive & has_action
+            alive_before = alive_before0 if agent_id == 0 else alive_before1
+            can_act = active & alive_before & (action >= 0)
             can_move = can_act & (action <= self.ACTION_RIGHT)
 
-            px = old_pos[:, agent_id, 0]
-            py = old_pos[:, agent_id, 1]
+            px = current_x[agent_id]
+            py = current_y[agent_id]
             nx = torch.clamp(px + self.delta_x[action_idx], 0, self.width - 1)
             ny = torch.clamp(py + self.delta_y[action_idx], 0, self.height - 1)
+            next_x.append(torch.where(can_move, nx, px))
+            next_y.append(torch.where(can_move, ny, py))
 
-            proposed_pos[:, agent_id, 0] = torch.where(can_move, nx, px)
-            proposed_pos[:, agent_id, 1] = torch.where(can_move, ny, py)
-
-        alive0 = self.health[:, 0] > 0
-        alive1 = self.health[:, 1] > 0
-        p0x = proposed_pos[:, 0, 0]
-        p0y = proposed_pos[:, 0, 1]
-        p1x = proposed_pos[:, 1, 0]
-        p1y = proposed_pos[:, 1, 1]
-        o0x = old_pos[:, 0, 0]
-        o0y = old_pos[:, 0, 1]
-        o1x = old_pos[:, 1, 0]
-        o1y = old_pos[:, 1, 1]
-
-        same_destination = active & alive0 & alive1 & (p0x == p1x) & (p0y == p1y)
+        same_destination = (
+            active
+            & alive_before0
+            & alive_before1
+            & (next_x[0] == next_x[1])
+            & (next_y[0] == next_y[1])
+        )
         swapped_positions = (
-            active & alive0 & alive1 & (p0x == o1x) & (p0y == o1y) & (p1x == o0x) & (p1y == o0y)
+            active
+            & alive_before0
+            & alive_before1
+            & (next_x[0] == current_x[1])
+            & (next_y[0] == current_y[1])
+            & (next_x[1] == current_x[0])
+            & (next_y[1] == current_y[0])
         )
         blocked = same_destination | swapped_positions
         if torch.any(blocked):
-            proposed_pos[blocked, 0, :] = old_pos[blocked, 0, :]
-            proposed_pos[blocked, 1, :] = old_pos[blocked, 1, :]
+            next_x[0] = torch.where(blocked, current_x[0], next_x[0])
+            next_y[0] = torch.where(blocked, current_y[0], next_y[0])
+            next_x[1] = torch.where(blocked, current_x[1], next_x[1])
+            next_y[1] = torch.where(blocked, current_y[1], next_y[1])
 
-        self.agent_pos.copy_(proposed_pos)
+        self.agent_pos[:, 0, 0] = next_x[0]
+        self.agent_pos[:, 0, 1] = next_y[0]
+        self.agent_pos[:, 1, 0] = next_x[1]
+        self.agent_pos[:, 1, 1] = next_y[1]
 
         rewards[active, :] -= float(self.config.step_penalty)
         self.steps[active] += 1
@@ -171,9 +205,16 @@ class BattleGridTorchEnv(SimEnv):
         damage_to_1 = hit0.to(torch.int64) * self.attack_damage
         damage_to_0 = hit1.to(torch.int64) * self.attack_damage
 
-        health_before = self.health.clone()
-        self.health[:, 1] = torch.clamp(self.health[:, 1] - damage_to_1, min=0, max=self.max_health)
-        self.health[:, 0] = torch.clamp(self.health[:, 0] - damage_to_0, min=0, max=self.max_health)
+        self.health[:, 1] = torch.clamp(
+            self.health[:, 1] - damage_to_1,
+            min=0,
+            max=self.max_health,
+        )
+        self.health[:, 0] = torch.clamp(
+            self.health[:, 0] - damage_to_0,
+            min=0,
+            max=self.max_health,
+        )
 
         damage_reward = float(self.config.damage_reward)
         if damage_reward != 0.0:
@@ -182,8 +223,8 @@ class BattleGridTorchEnv(SimEnv):
             rewards[:, 1] += damage_to_0.to(self.dtype) * damage_reward
             rewards[:, 0] -= damage_to_0.to(self.dtype) * damage_reward
 
-        death0 = active & (health_before[:, 0] > 0) & (self.health[:, 0] <= 0)
-        death1 = active & (health_before[:, 1] > 0) & (self.health[:, 1] <= 0)
+        death0 = active & alive_before0 & (self.health[:, 0] <= 0)
+        death1 = active & alive_before1 & (self.health[:, 1] <= 0)
         finished = death0 | death1
 
         kill_reward = float(self.config.kill_reward)
@@ -235,8 +276,8 @@ class BattleGridTorchEnv(SimEnv):
         self.done |= finished | timed_out
 
         obs = self._get_observation()
-        info = self._build_info(extra={"health": self.health.clone()})
-        return obs, rewards, self.done.clone(), info
+        info = self._build_info(extra={"health": self.health})
+        return obs, rewards, self._payload_value(self.done), info
 
     def _normalize_actions(self, actions: torch.Tensor | None) -> torch.Tensor:
         return self._normalize_action_matrix(actions)
@@ -265,39 +306,41 @@ class BattleGridTorchEnv(SimEnv):
         self.agent_pos[:, 1, 1] = y1
 
     def _get_observation(self) -> Dict[str, torch.Tensor]:
-        self.obs_buffer.zero_()
+        previous_env_idx, previous_agent_idx = torch.nonzero(
+            self.last_obs_agent_visible,
+            as_tuple=True,
+        )
+        if previous_env_idx.numel() > 0:
+            previous_y = self.last_obs_agent_pos[previous_env_idx, previous_agent_idx, 1]
+            previous_x = self.last_obs_agent_pos[previous_env_idx, previous_agent_idx, 0]
+            self.obs_buffer[previous_env_idx, previous_agent_idx, previous_y, previous_x] = 0.0
 
-        alive0 = self.health[:, 0] > 0
-        alive1 = self.health[:, 1] > 0
+        alive = self.health > 0
+        visible_env_idx, visible_agent_idx = torch.nonzero(alive, as_tuple=True)
+        if visible_env_idx.numel() > 0:
+            current_y = self.agent_pos[visible_env_idx, visible_agent_idx, 1]
+            current_x = self.agent_pos[visible_env_idx, visible_agent_idx, 0]
+            self.obs_buffer[visible_env_idx, visible_agent_idx, current_y, current_x] = 1.0
 
-        if torch.any(alive0):
-            idx0 = self.env_idx[alive0]
-            self.obs_buffer[
-                idx0,
-                0,
-                self.agent_pos[alive0, 0, 1],
-                self.agent_pos[alive0, 0, 0],
-            ] = 1.0
-        if torch.any(alive1):
-            idx1 = self.env_idx[alive1]
-            self.obs_buffer[
-                idx1,
-                1,
-                self.agent_pos[alive1, 1, 1],
-                self.agent_pos[alive1, 1, 0],
-            ] = 1.0
+        self.last_obs_agent_pos.copy_(self.agent_pos)
+        self.last_obs_agent_visible.copy_(alive)
 
-        hp0 = (self.health[:, 0].to(self.dtype) / float(self.max_health)).view(self.num_envs, 1, 1)
-        hp1 = (self.health[:, 1].to(self.dtype) / float(self.max_health)).view(self.num_envs, 1, 1)
-        step_progress = (self.steps.to(self.dtype) / float(self.max_steps)).view(
-            self.num_envs, 1, 1
+        self.feature_buffer[:, 0] = self.health[:, 0].to(self.dtype) / float(self.max_health)
+        self.feature_buffer[:, 1] = self.health[:, 1].to(self.dtype) / float(self.max_health)
+        self.feature_buffer[:, 2] = self.steps.to(self.dtype) / float(self.max_steps)
+
+        return self._pack_observation_dict(
+            self.obs_buffer,
+            extra={
+                "features": self.feature_buffer,
+                "health": self.health,
+            },
         )
 
-        self.obs_buffer[:, 2].copy_(hp0.expand(-1, self.height, self.width))
-        self.obs_buffer[:, 3].copy_(hp1.expand(-1, self.height, self.width))
-        self.obs_buffer[:, 4].copy_(step_progress.expand(-1, self.height, self.width))
-
-        return self._pack_observation_dict(self.obs_buffer, extra={"health": self.health.clone()})
+    def _reset_observation_cache(self) -> None:
+        self.obs_buffer.zero_()
+        self.last_obs_agent_pos.zero_()
+        self.last_obs_agent_visible.zero_()
 
 
 BattleGridEnv = BattleGridTorchEnv

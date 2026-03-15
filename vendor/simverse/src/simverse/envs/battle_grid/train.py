@@ -31,7 +31,7 @@ def train(
     use_wandb: bool = False,
     use_compile: bool = True,
 ) -> None:
-    device = resolve_torch_device(prefer_mps=False)
+    device = resolve_torch_device(prefer_mps=True)
     dtype = resolve_rollout_dtype(device)
     configure_torch_backend(device)
 

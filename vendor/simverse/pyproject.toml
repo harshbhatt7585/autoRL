@@ -28,6 +28,10 @@ wandb = [
 pettingzoo = [
   "pettingzoo[atari]>=1.24; python_version < '3.13'",
 ]
+renderer = [
+  "fastapi>=0.110",
+  "uvicorn>=0.29",
+]
 
 [tool.ruff]
 line-length = 100

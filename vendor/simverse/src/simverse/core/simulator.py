@@ -65,17 +65,32 @@ class Simulator:
         obs = self._unwrap_reset_result(obs)
         if isinstance(obs, Mapping):
             if "obs" in obs:
-                return obs["obs"]
+                return obs
             raise KeyError("Expected observation payload under the 'obs' key")
         return obs
 
-    def _prepare_policy_observation(self, obs: Any) -> torch.Tensor:
+    def _prepare_policy_inputs(self, obs: Any) -> tuple[torch.Tensor, torch.Tensor | None]:
         payload = self._extract_observation_payload(obs)
-        obs_tensor = payload if isinstance(payload, torch.Tensor) else torch.as_tensor(payload)
+        if isinstance(payload, Mapping):
+            obs_payload = payload["obs"]
+            feature_payload = payload.get("features")
+        else:
+            obs_payload = payload
+            feature_payload = None
+
+        obs_tensor = (
+            obs_payload if isinstance(obs_payload, torch.Tensor) else torch.as_tensor(obs_payload)
+        )
         if obs_tensor.ndim == 0:
             obs_tensor = obs_tensor.unsqueeze(0)
 
-        single_obs_shape = getattr(getattr(self.env, "observation_space", None), "shape", None)
+        observation_space = getattr(self.env, "observation_space", None)
+        if hasattr(observation_space, "spaces"):
+            single_obs_shape = getattr(observation_space["obs"], "shape", None)
+            feature_shape = getattr(observation_space.spaces.get("features"), "shape", None)
+        else:
+            single_obs_shape = getattr(observation_space, "shape", None)
+            feature_shape = None
         if single_obs_shape is not None:
             expected_shape = tuple(int(dim) for dim in single_obs_shape)
             if tuple(obs_tensor.shape) == expected_shape:
@@ -89,7 +104,24 @@ class Simulator:
             if obs_tensor.shape[0] != expected_batch and expected_batch == 1:
                 obs_tensor = obs_tensor.unsqueeze(0)
 
-        return obs_tensor.to(dtype=torch.float32)
+        feature_tensor: torch.Tensor | None = None
+        if feature_payload is not None:
+            feature_tensor = (
+                feature_payload
+                if isinstance(feature_payload, torch.Tensor)
+                else torch.as_tensor(feature_payload)
+            )
+            if feature_tensor.ndim == 0:
+                feature_tensor = feature_tensor.unsqueeze(0)
+            elif feature_shape is not None:
+                expected_feature_shape = tuple(int(dim) for dim in feature_shape)
+                if tuple(feature_tensor.shape) == expected_feature_shape:
+                    feature_tensor = feature_tensor.unsqueeze(0)
+            if feature_tensor.shape[0] != obs_tensor.shape[0] and obs_tensor.shape[0] == 1:
+                feature_tensor = feature_tensor.unsqueeze(0)
+            feature_tensor = feature_tensor.to(dtype=torch.float32)
+
+        return obs_tensor.to(dtype=torch.float32), feature_tensor
 
     @staticmethod
     def _all_done(done: Any) -> bool:
@@ -142,6 +174,7 @@ class Simulator:
         *,
         agents: List[SimAgent],
         obs_tensor: torch.Tensor,
+        feature_tensor: torch.Tensor | None = None,
     ) -> torch.Tensor | Sequence[dict[int, int]] | dict[int, int]:
         batch_envs = int(obs_tensor.shape[0]) if obs_tensor.ndim > 0 else 1
 
@@ -160,7 +193,10 @@ class Simulator:
                 continue
             agent.policy.eval()
             with torch.no_grad():
-                logits, _ = agent.policy(obs_tensor)
+                if feature_tensor is None:
+                    logits, _ = agent.policy(obs_tensor)
+                else:
+                    logits, _ = agent.policy(obs_tensor, feature_tensor)
                 logits_f32 = logits.to(dtype=torch.float32)
                 if not bool(torch.isfinite(logits_f32).all().item()):
                     raise RuntimeError("Non-finite logits detected during simulator run")
@@ -230,22 +266,30 @@ class Simulator:
         """
         agents = self._build_agents()
         self._attach_agents(agents)
+        previous_clone_payload_tensors = getattr(self.env, "clone_payload_tensors", None)
 
         if checkpoint_path:
             self.load_checkpoint(checkpoint_path)
 
-        obs = self._unwrap_reset_result(self.env.reset())
-        max_steps = max_steps or getattr(getattr(self.env, "config", None), "max_steps", None)
-        done = False
-        step = 0
-
         try:
+            if isinstance(self.env, SimEnv) and hasattr(self.env, "set_fast_payload_mode"):
+                self.env.set_fast_payload_mode(False)
+
+            obs = self._unwrap_reset_result(self.env.reset())
+            max_steps = max_steps or getattr(getattr(self.env, "config", None), "max_steps", None)
+            done = False
+            step = 0
+
             while not done and (max_steps is None or step < max_steps):
                 if renderer:
                     renderer.handle_events()
 
-                obs_tensor = self._prepare_policy_observation(obs)
-                actions = self._sample_env_actions(agents=agents, obs_tensor=obs_tensor)
+                obs_tensor, feature_tensor = self._prepare_policy_inputs(obs)
+                actions = self._sample_env_actions(
+                    agents=agents,
+                    obs_tensor=obs_tensor,
+                    feature_tensor=feature_tensor,
+                )
 
                 obs, reward, done, info = self._step_env(actions)
                 obs = self._unwrap_reset_result(obs)
@@ -257,5 +301,7 @@ class Simulator:
                 step += 1
                 done = self._all_done(done)
         finally:
+            if isinstance(self.env, SimEnv) and previous_clone_payload_tensors is not None:
+                self.env.clone_payload_tensors = bool(previous_clone_payload_tensors)
             if renderer:
                 renderer.close()

@@ -1,13 +1,7 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 
 import GameRenderer from './GameRenderer'
-import type {
-  GenericFrame,
-  RenderGame,
-  ReplayDetail,
-  ReplaySummary,
-  ReplaysResponse,
-} from './types'
+import type { GenericFrame, RenderGame, ReplayDetail } from './types'
 import { firstScalar, parseNumber, parseReward, resolveUrl } from './utils'
 
 type ReplayProps = {
@@ -17,123 +11,63 @@ type ReplayProps = {
 }
 
 function Replay({ game, onGameChange, baseUrl }: ReplayProps) {
-  const [episodes, setEpisodes] = useState<ReplaySummary[]>([])
-  const [selectedReplayId, setSelectedReplayId] = useState('')
   const [selectedReplay, setSelectedReplay] = useState<ReplayDetail | null>(null)
   const [frameIndex, setFrameIndex] = useState(0)
   const [playing, setPlaying] = useState(false)
   const [speed, setSpeed] = useState(1)
-  const [status, setStatus] = useState('Loading replays...')
+  const [status, setStatus] = useState('Loading replay...')
   const [error, setError] = useState('')
   const [refreshToken, setRefreshToken] = useState(0)
-
-  const selectedReplayName = useMemo(() => {
-    if (selectedReplay?.name) {
-      return selectedReplay.name
-    }
-    return episodes.find((episode) => episode.id === selectedReplayId)?.name ?? ''
-  }, [episodes, selectedReplay, selectedReplayId])
-  const selectedReplayIndex = useMemo(
-    () => episodes.findIndex((episode) => episode.id === selectedReplayId),
-    [episodes, selectedReplayId],
-  )
 
   const frames = Array.isArray(selectedReplay?.data?.frames) ? selectedReplay.data.frames : []
   const currentFrame: GenericFrame | null =
     frames.length > 0 ? frames[Math.max(0, Math.min(frameIndex, frames.length - 1))] : null
 
   useEffect(() => {
-    void (async () => {
-      setError('')
-      setStatus('Loading replays...')
-      try {
-        const response = await fetch(resolveUrl(baseUrl, '/replays/'), { cache: 'no-store' })
-        if (!response.ok) {
-          throw new Error(`Unable to load replays (${response.status})`)
-        }
+    const timer = window.setInterval(() => {
+      setRefreshToken((value) => value + 1)
+    }, 10_000)
 
-        const payload = (await response.json()) as ReplaysResponse
-        const nextEpisodes = Array.isArray(payload.episodes)
-          ? payload.episodes
-              .map((episode) => {
-                if (!episode || typeof episode.name !== 'string') {
-                  return null
-                }
-                const fallbackId = episode.name.replace(/\.json$/i, '')
-                const id =
-                  typeof episode.id === 'string' && episode.id.length > 0 ? episode.id : fallbackId
-                return { id, name: episode.name } satisfies ReplaySummary
-              })
-              .filter((episode): episode is ReplaySummary => episode !== null)
-          : []
-
-        setEpisodes(nextEpisodes)
-        if (nextEpisodes.length === 0) {
-          setSelectedReplayId('')
-          setSelectedReplay(null)
-          setFrameIndex(0)
-          setStatus('No replay JSON files found.')
-          return
-        }
-
-        setSelectedReplayId((currentId) => {
-          if (nextEpisodes.some((episode) => episode.id === currentId)) {
-            return currentId
-          }
-          return nextEpisodes[0].id
-        })
-        setStatus(`Loaded ${nextEpisodes.length} replay files.`)
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err)
-        setError(message)
-      }
-    })()
-  }, [baseUrl, refreshToken])
+    return () => {
+      window.clearInterval(timer)
+    }
+  }, [])
 
   useEffect(() => {
-    if (!selectedReplayId) {
-      setSelectedReplay(null)
-      return
-    }
-
     void (async () => {
       setError('')
-      setStatus(`Loading replay ${selectedReplayId}...`)
+      setStatus('Loading replay...')
       try {
-        const response = await fetch(resolveUrl(baseUrl, `/replays/${encodeURIComponent(selectedReplayId)}`), {
+        const response = await fetch(resolveUrl(baseUrl, '/replay/'), {
           cache: 'no-store',
         })
         if (!response.ok) {
-          throw new Error(`Unable to load replay ${selectedReplayId} (${response.status})`)
+          throw new Error(`Unable to load replay (${response.status})`)
         }
-
         const payload = (await response.json()) as ReplayDetail
         if (!payload || typeof payload.name !== 'string' || typeof payload.id !== 'string') {
           throw new Error('Invalid replay response format')
         }
 
+        const previousFrameCount = Array.isArray(selectedReplay?.data?.frames)
+          ? selectedReplay.data.frames.length
+          : 0
+        const nextFrameCount = Array.isArray(payload.data?.frames) ? payload.data.frames.length : 0
+        const wasAtTail = previousFrameCount > 0 && frameIndex >= previousFrameCount - 1
+
         setSelectedReplay(payload)
-        setFrameIndex(0)
+        if (wasAtTail && nextFrameCount > previousFrameCount) {
+          setFrameIndex(nextFrameCount - 1)
+        } else {
+          setFrameIndex((current) => Math.max(0, Math.min(current, Math.max(nextFrameCount - 1, 0))))
+        }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err)
         setError(message)
+        setSelectedReplay(null)
       }
     })()
-  }, [baseUrl, selectedReplayId])
-
-  const selectEpisodeByOffset = (offset: number, autoPlay = false) => {
-    if (episodes.length === 0 || selectedReplayIndex < 0) {
-      return
-    }
-    const nextIndex = Math.max(0, Math.min(episodes.length - 1, selectedReplayIndex + offset))
-    const nextEpisode = episodes[nextIndex]
-    if (!nextEpisode) {
-      return
-    }
-    setSelectedReplayId(nextEpisode.id)
-    setFrameIndex(0)
-    setPlaying(autoPlay)
-  }
+  }, [baseUrl, refreshToken])
 
   useEffect(() => {
     if (frameIndex >= frames.length) {
@@ -152,11 +86,6 @@ function Replay({ game, onGameChange, baseUrl }: ReplayProps) {
       setFrameIndex((current) => {
         const next = current + 1
         if (next >= frames.length) {
-          const nextEpisode = episodes[selectedReplayIndex + 1]
-          if (nextEpisode) {
-            setSelectedReplayId(nextEpisode.id)
-            return 0
-          }
           setPlaying(false)
           return Math.max(frames.length - 1, 0)
         }
@@ -167,10 +96,13 @@ function Replay({ game, onGameChange, baseUrl }: ReplayProps) {
     return () => {
       window.clearInterval(timer)
     }
-  }, [episodes, frames.length, playing, selectedReplayIndex, speed])
+  }, [frames.length, playing, speed])
 
   useEffect(() => {
     if (!currentFrame) {
+      if (!error) {
+        setStatus('No replay data yet. Waiting for replay.json updates...')
+      }
       return
     }
 
@@ -185,7 +117,7 @@ function Replay({ game, onGameChange, baseUrl }: ReplayProps) {
     setStatus(
       [
         `game: ${game}`,
-        `file: ${selectedReplayName}`,
+        `file: ${selectedReplay?.name ?? 'replay.json'}`,
         `episode: ${episode}`,
         `frame: ${frameIndex + 1}/${frames.length}`,
         `step: ${currentFrame.step ?? '?'}`,
@@ -196,7 +128,7 @@ function Replay({ game, onGameChange, baseUrl }: ReplayProps) {
         `steps: ${steps}`,
       ].join('\n'),
     )
-  }, [currentFrame, frameIndex, frames.length, game, selectedReplayName])
+  }, [currentFrame, error, frameIndex, frames.length, game, selectedReplay?.name])
 
   return (
     <div className="viewer-grid">
@@ -212,7 +144,6 @@ function Replay({ game, onGameChange, baseUrl }: ReplayProps) {
           value={game}
           onChange={(event) => {
             onGameChange(event.target.value as RenderGame)
-            setSelectedReplayId('')
             setSelectedReplay(null)
             setFrameIndex(0)
             setPlaying(false)
@@ -220,56 +151,39 @@ function Replay({ game, onGameChange, baseUrl }: ReplayProps) {
           }}
         >
           <option value="snake">Snake</option>
-          <option value="maze">Maze Runner</option>
-        </select>
-
-        <label className="inline-label" htmlFor="replay-episode">
-          Replay File
-        </label>
-        <select
-          id="replay-episode"
-          value={selectedReplayId}
-          onChange={(event) => {
-            setSelectedReplayId(event.target.value)
-            setFrameIndex(0)
-            setPlaying(false)
-          }}
-          disabled={episodes.length === 0}
-        >
-          {episodes.map((episode) => (
-            <option key={episode.id} value={episode.id}>
-              {episode.name}
-            </option>
-          ))}
+          <option value="maze">Maze Race</option>
+          <option value="battle-grid">Battle Grid</option>
         </select>
 
         <div className="control-row compact">
           <button
             type="button"
-            disabled={episodes.length === 0}
+            disabled={frames.length === 0}
             onClick={() => {
-              selectEpisodeByOffset(-1, false)
+              setFrameIndex(0)
+              setPlaying(true)
             }}
           >
-            Prev
+            Play
           </button>
           <button
             type="button"
             disabled={frames.length === 0}
             onClick={() => {
-              setPlaying((value) => !value)
+              setPlaying(false)
             }}
           >
-            {playing ? 'Pause' : 'Play'}
+            Pause
           </button>
           <button
             type="button"
-            disabled={episodes.length === 0}
+            disabled={frames.length === 0}
             onClick={() => {
-              selectEpisodeByOffset(1, true)
+              setFrameIndex(0)
+              setPlaying(false)
             }}
           >
-            Next
+            Reset
           </button>
         </div>
 
@@ -287,32 +201,6 @@ function Replay({ game, onGameChange, baseUrl }: ReplayProps) {
             setSpeed(parseNumber(event.target.value, 1))
           }}
         />
-
-        <label className="inline-label" htmlFor="replay-seek">
-          Frame
-        </label>
-        <input
-          id="replay-seek"
-          type="range"
-          min={0}
-          max={Math.max(frames.length - 1, 0)}
-          step={1}
-          value={Math.max(0, Math.min(frameIndex, Math.max(frames.length - 1, 0)))}
-          onChange={(event) => {
-            setFrameIndex(parseInt(event.target.value, 10) || 0)
-          }}
-          disabled={frames.length === 0}
-        />
-
-        <button
-          type="button"
-          className="full"
-          onClick={() => {
-            setRefreshToken((value) => value + 1)
-          }}
-        >
-          Reload
-        </button>
 
         <pre className="status">{status}</pre>
         {error ? <p className="error">{error}</p> : null}

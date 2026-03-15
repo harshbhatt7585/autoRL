@@ -1,10 +1,10 @@
-export type ViewMode = 'live' | 'replay'
-export type RenderGame = 'snake' | 'maze'
+export type RenderGame = 'snake' | 'maze' | 'battle-grid'
 
 export type GenericFrame = {
   step?: number
   episode?: unknown
   observation?: unknown
+  features?: unknown
   rewards?: unknown
   info?: Record<string, unknown>
   done?: boolean

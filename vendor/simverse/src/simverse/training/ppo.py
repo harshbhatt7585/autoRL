@@ -2,7 +2,7 @@ import contextlib
 import random
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Sequence, Union
+from typing import Any, Dict, List, Optional, Union
 
 import numpy as np
 import torch
@@ -13,7 +13,6 @@ from simverse.core.trainer import Trainer
 from simverse.training.logging import training_logger
 from simverse.training.stats import TrainingStats
 from simverse.training.wandb import DEFAULT_WANDB_PROJECT
-from simverse.utils.replay_buffer import ReplayBuffer
 
 try:
     import wandb
@@ -82,7 +81,7 @@ class PPOTrainer(Trainer):
         self.optimizers = optimizers or {}
         self.centralized_critic = centralized_critic
         self.centralized_critic_optimizer = centralized_critic_optimizer
-        self.replay_buffer = ReplayBuffer(buffer_size)
+        self.buffer_size = int(buffer_size)
         self.episodes = episodes
         self.training_epochs = training_epochs
         self.clip_epsilon = clip_epsilon
@@ -120,16 +119,16 @@ class PPOTrainer(Trainer):
         if self.use_ctde and self.centralized_critic_optimizer is None:
             raise ValueError("CTDE requires a centralized_critic_optimizer")
         configured_fastpath = self.config.get("torch_fastpath")
-        if configured_fastpath is None:
-            # MPS often regresses with heavy indexed writes used by the tensor fastpath.
-            self.enable_torch_fastpath = self.device.type != "mps"
-        else:
-            self.enable_torch_fastpath = bool(configured_fastpath)
+        # Simplified trainer path: one rollout/update implementation.
+        self.enable_torch_fastpath = (
+            True if configured_fastpath is None else bool(configured_fastpath)
+        )
         self._tensor_buffers: Dict[int, Dict[str, torch.Tensor]] = {}
         self._tensor_buffer_sizes: Dict[int, int] = {}
         self._tensor_buffer_ptrs: Dict[int, int] = {}
         self._tensor_buffer_capacity = 0
         self._tensor_obs_shape: tuple[int, ...] | None = None
+        self._tensor_feature_shape: tuple[int, ...] | None = None
         self._tensor_final_values: Dict[int, torch.Tensor] = {}
 
     def _record_frame(self, frame_record: Dict[str, Any]) -> None:
@@ -177,6 +176,14 @@ class PPOTrainer(Trainer):
         if self.max_grad_norm > 0.0:
             torch.nn.utils.clip_grad_norm_(model.parameters(), self.max_grad_norm)
         optimizer.step()
+
+    def _select_rollout_actions(
+        self, logits_f32: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        dist = torch.distributions.Categorical(logits=logits_f32)
+        action = dist.sample()
+        log_prob = dist.log_prob(action).to(dtype=torch.float32)
+        return action, log_prob
 
     def _env_metadata(self) -> Dict[str, Any]:
         if self._env_metadata_cache is not None:
@@ -226,10 +233,13 @@ class PPOTrainer(Trainer):
     ) -> Dict[str, Any]:
         obs_array = observation.get("obs")
         serialized_obs = obs_array.tolist() if hasattr(obs_array, "tolist") else obs_array
+        features = observation.get("features")
+        serialized_features = features.tolist() if hasattr(features, "tolist") else features
         return {
             "episode": int(episode),
             "step": step,
             "observation": serialized_obs,
+            "features": serialized_features,
             "agents": observation.get("agents", []),
             "actions": [
                 {"agent_id": agent_id, "action": action}
@@ -284,6 +294,28 @@ class PPOTrainer(Trainer):
             return obs_array.to(self.device, dtype=self.dtype)
         return torch.from_numpy(obs_array).to(self.dtype).to(self.device)
 
+    def _prepare_feature_tensor(
+        self,
+        observation: Dict[str, Any],
+        batch_size: int,
+    ) -> torch.Tensor | None:
+        features = observation.get("features")
+        if features is None:
+            return None
+        if isinstance(features, torch.Tensor):
+            feature_tensor = features.to(self.device, dtype=self.dtype)
+        elif isinstance(features, np.ndarray):
+            feature_tensor = torch.from_numpy(features).to(self.device, dtype=self.dtype)
+        else:
+            feature_tensor = torch.as_tensor(features, device=self.device, dtype=self.dtype)
+        if feature_tensor.dim() == 1:
+            feature_tensor = feature_tensor.unsqueeze(0)
+        if int(feature_tensor.shape[0]) != batch_size:
+            raise ValueError(
+                f"Expected feature batch size {batch_size}, received {int(feature_tensor.shape[0])}"
+            )
+        return feature_tensor
+
     def _prepare_local_obs_tensor(
         self,
         observation: Dict[str, Any],
@@ -310,6 +342,16 @@ class PPOTrainer(Trainer):
                 f"Expected local_obs batch size {batch_size}, received {int(local.shape[0])}"
             )
         return local
+
+    def _policy_forward(
+        self,
+        policy: torch.nn.Module,
+        observation: torch.Tensor,
+        features: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        if features is None:
+            return policy(observation)
+        return policy(observation, features)
 
     def _critic_value(self, global_observation: torch.Tensor) -> torch.Tensor:
         if self.centralized_critic is None:
@@ -460,8 +502,19 @@ class PPOTrainer(Trainer):
         else:
             env_local_obs = None
 
+        feature_field = observation.get("features")
+        if isinstance(feature_field, torch.Tensor):
+            env_features = feature_field[env_idx]
+        elif isinstance(feature_field, np.ndarray):
+            env_features = feature_field[env_idx]
+        elif isinstance(feature_field, (list, tuple)) and len(feature_field) > env_idx:
+            env_features = feature_field[env_idx]
+        else:
+            env_features = None
+
         return {
             "obs": env_obs,
+            "features": env_features,
             "local_obs": env_local_obs,
             "agents": env_agents,
             "done": env_done,
@@ -522,7 +575,7 @@ class PPOTrainer(Trainer):
 
     def _rollout_horizon_steps(self) -> int:
         num_agents = max(len(getattr(self, "agents", [])), 1)
-        per_agent_capacity = max(self.replay_buffer.max_size // num_agents, 1)
+        per_agent_capacity = max(self.buffer_size // num_agents, 1)
         return max(per_agent_capacity // max(self.env_batch_size, 1), 1)
 
     def _capture_rollout_bootstrap_values(self, observation: Dict[str, Any]) -> None:
@@ -536,6 +589,7 @@ class PPOTrainer(Trainer):
             return
 
         obs_tensor = self._prepare_obs_tensor(observation)
+        feature_tensor = self._prepare_feature_tensor(observation, batch_size)
         local_obs_tensor = self._prepare_local_obs_tensor(observation, batch_size)
         final_values: Dict[int, torch.Tensor] = {}
 
@@ -551,7 +605,11 @@ class PPOTrainer(Trainer):
 
                 actor_obs = local_obs_tensor[:, agent.agent_id] if self.use_ctde else obs_tensor
                 with self._autocast_context():
-                    _logits, value = agent.policy(actor_obs)
+                    _logits, value = self._policy_forward(
+                        agent.policy,
+                        actor_obs,
+                        feature_tensor,
+                    )
                 final_values[agent.agent_id] = value.squeeze(-1).detach().to(dtype=torch.float32)
 
         self._tensor_final_values = final_values
@@ -560,14 +618,16 @@ class PPOTrainer(Trainer):
         self,
         obs_shape: tuple[int, ...],
         global_obs_shape: tuple[int, ...] | None = None,
+        feature_shape: tuple[int, ...] | None = None,
     ) -> None:
         if not self.agents:
             return
         num_agents = max(len(self.agents), 1)
-        capacity = max(self.replay_buffer.max_size // num_agents, 1)
+        capacity = max(self.buffer_size // num_agents, 1)
         needs_reset = (
             self._tensor_buffer_capacity != capacity
             or self._tensor_obs_shape != obs_shape
+            or self._tensor_feature_shape != feature_shape
             or any(agent.agent_id not in self._tensor_buffers for agent in self.agents)
         )
         if not needs_reset:
@@ -578,6 +638,7 @@ class PPOTrainer(Trainer):
         self._tensor_buffer_ptrs = {}
         self._tensor_buffer_capacity = capacity
         self._tensor_obs_shape = obs_shape
+        self._tensor_feature_shape = feature_shape
 
         for agent in self.agents:
             agent_id = agent.agent_id
@@ -594,6 +655,12 @@ class PPOTrainer(Trainer):
                 "done": torch.empty((capacity,), dtype=torch.bool, device=self.device),
                 "valid": torch.empty((capacity,), dtype=torch.bool, device=self.device),
             }
+            if feature_shape is not None:
+                self._tensor_buffers[agent_id]["features"] = torch.empty(
+                    (capacity, *feature_shape),
+                    dtype=self.dtype,
+                    device=self.device,
+                )
             if self.use_ctde:
                 if global_obs_shape is None:
                     raise ValueError("CTDE requires global observation shape for tensor buffers")
@@ -610,6 +677,7 @@ class PPOTrainer(Trainer):
         agent_id: int,
         *,
         obs: torch.Tensor,
+        features: torch.Tensor | None = None,
         global_obs: torch.Tensor | None = None,
         action: torch.Tensor,
         log_prob: torch.Tensor,
@@ -629,6 +697,8 @@ class PPOTrainer(Trainer):
         if batch_size > capacity:
             start = batch_size - capacity
             obs = obs[start:]
+            if features is not None:
+                features = features[start:]
             action = action[start:]
             log_prob = log_prob[start:]
             value = value[start:]
@@ -641,6 +711,10 @@ class PPOTrainer(Trainer):
         ptr = self._tensor_buffer_ptrs[agent_id]
         indices = (torch.arange(batch_size, device=self.device) + ptr) % capacity
         buffer["obs"].index_copy_(0, indices, obs[:batch_size])
+        if features is not None:
+            if "features" not in buffer:
+                raise ValueError("Feature buffer missing for observation features")
+            buffer["features"].index_copy_(0, indices, features[:batch_size])
         buffer["action"].index_copy_(0, indices, action[:batch_size])
         buffer["log_prob"].index_copy_(0, indices, log_prob[:batch_size].to(dtype=torch.float32))
         buffer["value"].index_copy_(0, indices, value[:batch_size].to(dtype=torch.float32))
@@ -708,6 +782,9 @@ class PPOTrainer(Trainer):
         rewards_all = buffer["reward"].index_select(0, ordered_indices).to(dtype=torch.float32)
         dones_all = buffer["done"].index_select(0, ordered_indices)
         valid_all = buffer["valid"].index_select(0, ordered_indices)
+        features_all = (
+            buffer["features"].index_select(0, ordered_indices) if "features" in buffer else None
+        )
         final_values = self._tensor_final_values.get(
             agent.agent_id,
             torch.zeros(env_count, dtype=torch.float32, device=self.device),
@@ -743,20 +820,25 @@ class PPOTrainer(Trainer):
             updates = 0
 
             for start in range(0, sample_count, self.batch_size):
-                mb_valid_positions = permutation[start : start + self.batch_size]
-                if mb_valid_positions.numel() == 0:
+                mini_batch_valid_positions = permutation[start : start + self.batch_size]
+                if mini_batch_valid_positions.numel() == 0:
                     continue
 
-                mb_positions = valid_positions.index_select(0, mb_valid_positions)
-                mb_buffer_indices = ordered_indices.index_select(0, mb_positions)
-                observations = buffer["obs"].index_select(0, mb_buffer_indices)
-                actions = actions_all.index_select(0, mb_positions)
-                old_log_probs = old_log_probs_all.index_select(0, mb_positions)
-                policy_advantages = policy_advantages_all.index_select(0, mb_positions)
-                returns = returns_all.index_select(0, mb_positions)
+                mini_batch_positions = valid_positions.index_select(0, mini_batch_valid_positions)
+                mini_batch_buffer_indices = ordered_indices.index_select(0, mini_batch_positions)
+                observations = buffer["obs"].index_select(0, mini_batch_buffer_indices)
+                feature_batch = (
+                    features_all.index_select(0, mini_batch_positions)
+                    if features_all is not None
+                    else None
+                )
+                actions = actions_all.index_select(0, mini_batch_positions)
+                old_log_probs = old_log_probs_all.index_select(0, mini_batch_positions)
+                policy_advantages = policy_advantages_all.index_select(0, mini_batch_positions)
+                returns = returns_all.index_select(0, mini_batch_positions)
 
                 with self._autocast_context():
-                    logits, value = agent.policy(observations)
+                    logits, value = self._policy_forward(agent.policy, observations, feature_batch)
                 logits_f32 = logits.to(dtype=torch.float32)
                 value_f32 = value.squeeze(-1).to(dtype=torch.float32)
                 if not bool(torch.isfinite(logits_f32).all().item()):
@@ -783,7 +865,9 @@ class PPOTrainer(Trainer):
                 self._optimizer_step(optimizer, loss, agent.policy)
 
                 if self.use_ctde:
-                    sampled_global_obs = buffer["global_obs"].index_select(0, mb_buffer_indices)
+                    sampled_global_obs = buffer["global_obs"].index_select(
+                        0, mini_batch_buffer_indices
+                    )
                     if self.centralized_critic_optimizer is None:
                         raise RuntimeError("Missing centralized critic optimizer for CTDE")
                     with self._autocast_context():
@@ -830,43 +914,6 @@ class PPOTrainer(Trainer):
         if self._wandb_initialized and self.use_wandb and _WANDB_AVAILABLE:
             wandb.finish()
             training_logger.success("Wandb run finished")
-
-    # TODO: Looking suspicious, need to check if this is correct
-    def compute_gae(
-        self,
-        rewards: List[float],
-        values: List[float],
-        next_value: float,
-        dones: List[bool],
-    ) -> torch.Tensor:
-        """
-        Compute Generalized Advantage Estimation for a trajectory.
-
-        Args:
-            rewards: List of rewards for each step
-            values: List of value estimates for each step
-            next_value: Value estimate for the final next state (bootstrap)
-            dones: List of done flags for each step
-
-        Returns:
-            Tensor of advantages for each step
-        """
-        gae = 0.0
-        advantages = []
-        n_steps = len(rewards)
-
-        for step in reversed(range(n_steps)):
-            if step == n_steps - 1:
-                next_val = next_value
-            else:
-                next_val = values[step + 1]
-
-            done_mask = 1.0 - float(dones[step])
-            delta = rewards[step] + self.gamma * next_val * done_mask - values[step]
-            gae = delta + self.gamma * self.gae_lambda * done_mask * gae
-            advantages.insert(0, gae)
-
-        return torch.tensor(advantages, dtype=torch.float32)
 
     def _compute_vectorized_gae(
         self,
@@ -994,15 +1041,24 @@ class PPOTrainer(Trainer):
             obs_tensor = self._prepare_obs_tensor(obs)
             batch_envs = obs_tensor.shape[0]
             active_mask = self._active_env_mask(obs, batch_envs)
+            feature_tensor = self._prepare_feature_tensor(obs, batch_envs)
             local_obs_tensor = self._prepare_local_obs_tensor(obs, batch_envs)
 
             if self.use_ctde:
                 self._ensure_tensor_buffers(
                     tuple(local_obs_tensor.shape[2:]),
                     global_obs_shape=tuple(obs_tensor.shape[1:]),
+                    feature_shape=tuple(feature_tensor.shape[1:])
+                    if feature_tensor is not None
+                    else None,
                 )
             else:
-                self._ensure_tensor_buffers(tuple(obs_tensor.shape[1:]))
+                self._ensure_tensor_buffers(
+                    tuple(obs_tensor.shape[1:]),
+                    feature_shape=tuple(feature_tensor.shape[1:])
+                    if feature_tensor is not None
+                    else None,
+                )
 
             collected_agent_data: Dict[int, Dict[str, torch.Tensor]] = {}
             env_actions = torch.zeros(
@@ -1021,13 +1077,15 @@ class PPOTrainer(Trainer):
                 for agent in self.agents:
                     actor_obs = local_obs_tensor[:, agent.agent_id] if self.use_ctde else obs_tensor
                     with self._autocast_context():
-                        logits, value = agent.policy(actor_obs)
+                        logits, value = self._policy_forward(
+                            agent.policy,
+                            actor_obs,
+                            feature_tensor,
+                        )
                     logits_f32 = logits.to(dtype=torch.float32)
                     if not bool(torch.isfinite(logits_f32).all().item()):
                         raise RuntimeError("Non-finite logits detected during action sampling")
-                    dist = torch.distributions.Categorical(logits=logits_f32)
-                    action = dist.sample()
-                    log_prob = dist.log_prob(action).to(dtype=torch.float32)
+                    action, log_prob = self._select_rollout_actions(logits_f32)
 
                     collected_agent_data[agent.agent_id] = {
                         "action": action.detach(),
@@ -1072,6 +1130,7 @@ class PPOTrainer(Trainer):
                 self._tensor_buffer_add(
                     agent_id,
                     obs=actor_obs_batch,
+                    features=feature_tensor.detach() if feature_tensor is not None else None,
                     global_obs=obs_batch if self.use_ctde else None,
                     action=agent_data["action"],
                     log_prob=agent_data["log_prob"],
@@ -1112,245 +1171,6 @@ class PPOTrainer(Trainer):
             active_mask=~done_tensor if episode_steps > 0 else active_mask,
         )
 
-    def _run_legacy_episode(
-        self,
-        *,
-        episode: int,
-        obs: Dict[str, Any],
-        record_env_idx: int | None,
-        competitive_zero_sum: bool,
-        progress: RolloutProgress,
-        start_step: int = 0,
-        max_segment_steps: int | None = None,
-        active_mask: torch.Tensor | None = None,
-    ) -> EpisodeSummary:
-        if self.use_ctde:
-            raise RuntimeError(
-                "CTDE currently requires torch fastpath. Set config['torch_fastpath']=True."
-            )
-
-        episode_reward = 0.0
-        episode_agent_reward = np.zeros((self.env.config.num_agents,), dtype=np.float64)
-        episode_steps = 0
-        all_done = False
-        remaining_steps = max(self.env.config.max_steps - start_step, 0)
-        rollout_steps = (
-            remaining_steps
-            if max_segment_steps is None
-            else min(remaining_steps, max_segment_steps)
-        )
-        current_active_mask = active_mask
-
-        for local_step in range(rollout_steps):
-            step = start_step + local_step
-            obs_tensor = self._prepare_obs_tensor(obs)
-            batch_envs = obs_tensor.shape[0]
-            active_mask = (
-                self._active_env_mask(obs, batch_envs)
-                if current_active_mask is None
-                else current_active_mask
-            )
-            self._ensure_tensor_buffers(tuple(obs_tensor.shape[1:]))
-
-            actions_per_env: List[Dict[int, int]] | None = None
-            action_tensors: List[torch.Tensor] = []
-            if not isinstance(self.env, SimEnv):
-                actions_per_env = [{} for _ in range(batch_envs)]
-            collected_agent_data: Dict[int, Dict[str, torch.Tensor]] = {}
-
-            for agent in self.agents:
-                agent.policy.eval()
-                with torch.no_grad():
-                    with self._autocast_context():
-                        logits, value = agent.policy(obs_tensor)
-                    logits_f32 = logits.to(dtype=torch.float32)
-                    if not bool(torch.isfinite(logits_f32).all().item()):
-                        raise RuntimeError("Non-finite logits detected during action sampling")
-                    dist = torch.distributions.Categorical(logits=logits_f32)
-                    action = dist.sample()
-                    log_prob = dist.log_prob(action).to(dtype=torch.float32)
-
-                collected_agent_data[agent.agent_id] = {
-                    "action": action,
-                    "log_prob": log_prob,
-                    "value": value.squeeze(-1).to(dtype=torch.float32),
-                }
-
-                if isinstance(self.env, SimEnv):
-                    action_tensors.append(action)
-                else:
-                    action_cpu = action.detach().cpu()
-                    for env_idx in range(batch_envs):
-                        actions_per_env[env_idx][agent.agent_id] = int(action_cpu[env_idx].item())
-
-            env_actions: Union[Sequence[Dict[int, int]], Dict[int, int], torch.Tensor]
-            if isinstance(self.env, SimEnv):
-                if action_tensors:
-                    env_actions = torch.stack(action_tensors, dim=1)
-                else:
-                    env_actions = torch.zeros(
-                        (batch_envs, self.env.config.num_agents),
-                        dtype=torch.int64,
-                        device=self.env.device,
-                    )
-            elif batch_envs == 1:
-                env_actions = actions_per_env[0] if actions_per_env else {}
-            else:
-                env_actions = actions_per_env or [{} for _ in range(batch_envs)]
-
-            obs, reward, done, info = self.env.step(env_actions)
-
-            reward_array = self._reward_to_array(reward, batch_envs)
-            done_array = self._done_to_array(done, batch_envs)
-            if isinstance(reward_array, torch.Tensor):
-                reward_array_cpu = reward_array.detach().cpu().numpy()
-            else:
-                reward_array_cpu = reward_array
-            if isinstance(done_array, torch.Tensor):
-                done_array_cpu = done_array.detach().cpu().numpy()
-            else:
-                done_array_cpu = done_array
-            info_list = self._ensure_info_list(info, batch_envs)
-            reward_tensor = self._reward_to_tensor(reward, batch_envs)
-            done_tensor = self._done_to_tensor(done, batch_envs)
-
-            if record_env_idx is not None:
-                env_to_record = min(record_env_idx, batch_envs - 1)
-                if bool(active_mask[env_to_record].item()):
-                    if isinstance(self.env, SimEnv):
-                        frame_actions = {
-                            agent.agent_id: int(
-                                collected_agent_data[agent.agent_id]["action"][env_to_record].item()
-                            )
-                            for agent in self.agents
-                        }
-                    else:
-                        frame_actions = actions_per_env[env_to_record] if actions_per_env else {}
-                    self._record_episode_step(
-                        observation=obs,
-                        actions=frame_actions,
-                        reward_row=reward_array_cpu[env_to_record],
-                        info=info_list[env_to_record],
-                        episode=episode + 1,
-                        step=step + 1,
-                        done=bool(done_array_cpu[env_to_record]),
-                        env_idx=env_to_record,
-                    )
-
-            obs_batch = obs_tensor.detach()
-            valid_batch = active_mask.detach()
-            for agent_id, agent_data in collected_agent_data.items():
-                self._tensor_buffer_add(
-                    agent_id,
-                    obs=obs_batch,
-                    action=agent_data["action"].detach(),
-                    log_prob=agent_data["log_prob"].detach(),
-                    value=agent_data["value"].detach(),
-                    reward=reward_tensor[:, agent_id].detach(),
-                    done=done_tensor.detach(),
-                    valid=valid_batch,
-                )
-            active_envs = int(active_mask.sum().item())
-            if active_envs > 0:
-                self.stats.step(active_envs)
-
-            episode_reward += float(np.sum(reward_array_cpu))
-            episode_agent_reward += reward_array_cpu.sum(axis=0, dtype=np.float64)
-            episode_steps = local_step + 1
-            progress.total_agent_steps += active_envs * max(len(self.agents), 1)
-
-            self._log_rollout_progress(
-                step=step,
-                batch_envs=batch_envs,
-                competitive_zero_sum=competitive_zero_sum,
-                episode_reward=episode_reward,
-                episode_agent_reward=episode_agent_reward,
-                progress=progress,
-            )
-
-            current_active_mask = ~done_tensor
-            all_done = bool(np.all(done_array_cpu))
-            if all_done:
-                break
-
-        self._capture_rollout_bootstrap_values(obs)
-        return EpisodeSummary(
-            total_reward=episode_reward,
-            agent_rewards=episode_agent_reward,
-            steps=episode_steps,
-            next_observation=obs,
-            all_done=all_done,
-            active_mask=current_active_mask,
-        )
-
-    def _update_agent_from_replay_buffer(self, agent: SimAgent) -> None:
-        agent.policy.train()
-
-        for epoch in range(self.training_epochs):
-            trajectory = self.replay_buffer.sample_for_agent(agent.agent_id, self.batch_size)
-            if not trajectory:
-                break
-
-            observations = [exp.observation for exp in trajectory]
-            rewards = [
-                sum(exp.reward.values()) if isinstance(exp.reward, dict) else exp.reward
-                for exp in trajectory
-            ]
-            values = [exp.value.squeeze().item() for exp in trajectory]
-            dones = [
-                exp.done if isinstance(exp.done, bool) else bool(exp.done) for exp in trajectory
-            ]
-
-            with torch.no_grad():
-                _, next_value = agent.policy(observations[-1])
-                next_value = next_value.squeeze().item()
-
-            advantages = self.compute_gae(rewards, values, next_value, dones).to(self.device)
-            returns = advantages + torch.tensor(values, dtype=torch.float32, device=self.device)
-            policy_loss_value = 0.0
-            value_loss_value = 0.0
-
-            for i, exp in enumerate(trajectory):
-                with self._autocast_context():
-                    logits, value = agent.policy(exp.observation)
-                logits_f32 = logits.to(dtype=torch.float32)
-                if not bool(torch.isfinite(logits_f32).all().item()):
-                    raise RuntimeError("Non-finite logits detected during PPO update")
-                dist = torch.distributions.Categorical(logits=logits_f32)
-                log_prob = dist.log_prob(exp.action)
-
-                ratio = torch.exp(
-                    log_prob.to(dtype=torch.float32) - exp.log_prob.to(dtype=torch.float32)
-                )
-
-                adv = advantages[i]
-                surr1 = ratio * adv
-                surr2 = torch.clamp(ratio, 1 - self.clip_epsilon, 1 + self.clip_epsilon) * adv
-                policy_loss = -torch.min(surr1, surr2).mean()
-
-                value_loss = (
-                    0.5 * (returns[i] - value.squeeze().to(dtype=torch.float32)).pow(2).mean()
-                )
-
-                loss = policy_loss + 0.5 * value_loss
-                optimizer = self._get_optimizer(agent.agent_id)
-                self._optimizer_step(optimizer, loss, agent.policy)
-                policy_loss_value = float(policy_loss.item())
-                value_loss_value = float(value_loss.item())
-
-            training_logger.log_epoch(
-                epoch,
-                self.training_epochs,
-                policy_loss_value,
-                value_loss_value,
-            )
-            self.stats.push_agent_losses(
-                agent.agent_id,
-                policy_loss_value,
-                value_loss_value,
-            )
-            self.stats.log_wandb(step=self.stats.steps)
-
     def train(
         self,
         env: SimEnv,
@@ -1374,8 +1194,6 @@ class PPOTrainer(Trainer):
         for episode in range(self.episodes):
             training_logger.start_episode(episode + 1)
             self.stats.reset_episode()
-            # Keep PPO updates on-policy: each episode trains only on fresh rollout data.
-            self.replay_buffer.clear()
             self._reset_tensor_buffers()
 
             obs = self.env.reset()
@@ -1384,7 +1202,10 @@ class PPOTrainer(Trainer):
             record_env_idx = (
                 random.randrange(max(self.env_batch_size, 1)) if self.episode_save_dir else None
             )
-            use_torch_fastpath = isinstance(self.env, SimEnv) and self.enable_torch_fastpath
+            if not isinstance(self.env, SimEnv):
+                raise TypeError("PPOTrainer expects a SimEnv-compatible environment")
+            if not self.enable_torch_fastpath:
+                raise ValueError("Set config['torch_fastpath']=True; legacy path was removed")
             competitive_zero_sum = hasattr(self.env.config, "score_delta_reward")
             rollout_horizon = self._rollout_horizon_steps()
             episode_total_reward = 0.0
@@ -1395,27 +1216,15 @@ class PPOTrainer(Trainer):
 
             while episode_steps < self.env.config.max_steps and not all_done:
                 self._reset_tensor_buffers()
-                if use_torch_fastpath:
-                    segment_summary = self._run_fastpath_episode(
-                        episode=episode,
-                        obs=obs,
-                        record_env_idx=record_env_idx,
-                        competitive_zero_sum=competitive_zero_sum,
-                        progress=progress,
-                        start_step=episode_steps,
-                        max_segment_steps=rollout_horizon,
-                    )
-                else:
-                    segment_summary = self._run_legacy_episode(
-                        episode=episode,
-                        obs=obs,
-                        record_env_idx=record_env_idx,
-                        competitive_zero_sum=competitive_zero_sum,
-                        progress=progress,
-                        start_step=episode_steps,
-                        max_segment_steps=rollout_horizon,
-                        active_mask=current_active_mask,
-                    )
+                segment_summary = self._run_fastpath_episode(
+                    episode=episode,
+                    obs=obs,
+                    record_env_idx=record_env_idx,
+                    competitive_zero_sum=competitive_zero_sum,
+                    progress=progress,
+                    start_step=episode_steps,
+                    max_segment_steps=rollout_horizon,
+                )
 
                 if segment_summary.steps <= 0:
                     break

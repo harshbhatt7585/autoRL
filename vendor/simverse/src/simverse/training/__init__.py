@@ -17,6 +17,8 @@ _EXPORTS = {
     "get_logger": ("simverse.training.logging", "get_logger"),
     "resolve_rollout_dtype": ("simverse.training.utils", "resolve_rollout_dtype"),
     "resolve_torch_device": ("simverse.training.utils", "resolve_torch_device"),
+    "run_ippo_training": ("simverse.training.utils", "run_ippo_training"),
+    "run_mappo_training": ("simverse.training.utils", "run_mappo_training"),
     "run_ppo_training": ("simverse.training.utils", "run_ppo_training"),
     "training_logger": ("simverse.training.logging", "training_logger"),
 }

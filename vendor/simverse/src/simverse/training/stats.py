@@ -183,7 +183,7 @@ class TrainingStats:
         }
         if metadata:
             payload["metadata"] = metadata
-        output_path = output_dir / f"episode_{episode:04d}.json"
+        output_path = output_dir / "replay.json"
         output_path.write_text(json.dumps(payload, indent=2, default=_json_default))
         self.current_episode_frames.clear()
         return output_path
