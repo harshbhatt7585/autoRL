@@ -3,6 +3,9 @@ name = "autorl"
 version = "0.1.0"
 description = "A minimal autoresearch-style scaffold for RL environment invention."
 requires-python = ">=3.10"
+dependencies = [
+    "simverse @ git+https://github.com/harshbhatt7585/simverse.git",
+]
 
 [project.scripts]
 autorl = "cli:main"
