@@ -25,12 +25,9 @@ To set up a new run, work with the user to:
 ## Build brief
 
 The checked-in `candidate/env.py` is intentionally empty. The real task is to
-replace it with exactly one environment family from the approved list below.
-Do not invent a fourth family. Do not try to build both at once. Pick one,
-implement it cleanly, and optimize it.
-
-The two families below are the human-authored target tasks. Treat them as the
-source of truth for what the next real environment should be.
+build and train a **combat mission simulation** with **multiple cooperating
+and opposing agents**. This is the only in-scope environment family for this
+run. Do not switch to trading, household chores, or unrelated tasks.
 
 ## Episode horizon
 
@@ -41,8 +38,7 @@ through `training_overrides()["max_steps"]`.
 - The outer harness still owns `--train-episodes` and `--eval-episodes`.
 - Do not treat `max_steps` as a free optimization knob. It must faithfully match
   the chosen task brief.
-- Do not compress a `100`-hour trading task or a `1000`-step household task
-  down to a tiny proxy just to make the score easier.
+- Do not compress the combat mission into a tiny proxy just to make the score easier.
 
 ## Experimentation
 
@@ -56,7 +52,7 @@ episodes and all seeds. Other reported metrics are diagnostics only.
 Each experiment runs with an **agent-chosen episode budget**. You launch it as:
 
 ```bash
-uv run python train.py --train-episodes <n> --eval-episodes <m>
+uv run python train.py --train-episodes <n> --eval-episodes <m> --device cuda --wandb
 ```
 
 The evaluator has hard caps and fixed runtime settings:
@@ -65,7 +61,8 @@ The evaluator has hard caps and fixed runtime settings:
 - up to `100` greedy evaluation episodes
 - `2` random seeds
 - `32` parallel environments per seed
-- `cpu` by default
+- CUDA is available on an NVIDIA `T4` (`16GB` VRAM); prefer `--device cuda` for training runs.
+- Always enable W&B logging (`--wandb`) so runs are fully recorded.
 
 **Budget policy**:
 
@@ -109,180 +106,91 @@ Useful example ladder:
 
 **The goal is simple: get the highest score.** The budget is a search control knob, not a loophole. Spend as little budget as possible while ideas are weak, and only ratchet it upward when the accepted candidate has earned it. The only valid comparison is against the current accepted baseline at the same budget.
 
-**Single-agent constraint**: keep the search focused. The current evaluator expects a single-agent `SimEnv` with a discrete action space and a `C,H,W` observation tensor. Do not drift into multi-agent or continuous-control work unless the fixed evaluator is explicitly changed by the human.
+**Multi-agent mission constraint**: keep the search focused on a combat mission simulation with multiple agents, while still satisfying the fixed evaluator interfaces in this repository.
 
 **Simplicity criterion**: all else equal, simpler is better. A tiny score improvement that adds ugly complexity is not worth it. Conversely, deleting mechanics and getting the same or better score is a strong win. When deciding whether to keep a change, weigh the complexity cost against the score gain. Small hacky gains are weak. Cleaner env logic with equal performance is strong.
 
-**The first run**: your very first run should always be the baseline, so you run the current `candidate/env.py` and `candidate/train.py` exactly as they are. Right now that baseline is just an empty starter canvas. After recording it, start building one of the approved environments below.
+**The first run**: your very first run should always be the baseline, so you run the current `candidate/env.py` and `candidate/train.py` exactly as they are. Right now that baseline is just an empty starter canvas. After recording it, start building the combat mission environment.
 
-## Approved environment families
+## Combat mission environment brief
 
-You may build exactly one of these two families.
-
-### 1. Trading env
-
-Build a stock-trading simulator over `5` imaginary companies. Each company
-should have a distinct pattern family so the policy can learn recognizable
-price behavior instead of pure noise. Good examples are:
-
-- momentum / trend-up
-- mean-reverting
-- volatile boom-bust
-- slow cyclical
-- noisy flat / deceptive
+Build a tactical multi-agent combat simulator where allies coordinate under
+partial information against adversaries. The mission should reward tactical
+movement, target selection, survival, and objective completion.
 
 Core episode structure:
 
-- Each episode samples one company.
-- The agent starts with `$500` cash and zero holdings.
-- One episode represents `100` hours of trading.
-- One environment step equals `1` trading hour.
-- The action space is exactly `3` actions: `buy`, `sell`, `rest`.
-- `buy` should purchase one unit if enough cash is available.
-- `sell` should liquidate one unit if inventory is available.
-- `rest` leaves the portfolio unchanged.
+- Multi-agent setting with at least one friendly team and one opposing team.
+- Discrete action space with movement and combat-relevant actions.
+- One episode should represent a full mission window with clear termination logic
+  (objective complete, team eliminated, or horizon reached).
+- Maintain deterministic seeding for reproducibility.
 
-Dataset design:
+Mission design:
 
-- Do not pull real market data or external files.
-- Generate a small synthetic dataset of `5` fictional companies directly in the env.
-- Each company should have its own seeded price generator so its behavior is repeatable.
-- The point is not realism for its own sake. The point is that the companies expose different learnable trading regimes.
-- Good structure is: one base pattern family per company plus mild stochastic variation around that family.
+- Include a compact arena or grid with obstacles/cover and mission objectives.
+- Support meaningful coordination pressure (crossfire, flanking, escort, capture,
+  defend, or extraction).
+- Keep transitions and reward shaping stable enough for PPO to learn.
 
 Required state:
 
-- current cash
-- current holdings
-- current price
-- recent price history window
-- remaining time
-- realized / unrealized profit markers if useful
+- Team health / alive flags.
+- Positions and mission-objective state.
+- Ammo/cooldown/status features if used.
+- Remaining mission time.
 
 Observation design:
 
-- Even though this is semantically a trading simulator, the fixed evaluator still expects `C,H,W`.
-- Encode the price history, cash, holdings, and time features into a compact tensor.
-- Keep the encoding simple and stationary. Do not hide extra information in arbitrary channels.
-- The observation should be sufficient for the policy to infer trend, volatility, current exposure, and time remaining.
+- The fixed evaluator still expects `C,H,W`.
+- Encode multi-agent tactical state into tensor channels (ally map, enemy map,
+  obstacles, objective, time, and status channels).
+- Keep channel semantics explicit and stationary.
 
 Reward structure:
 
-- Use a dense trading reward plus a terminal portfolio reward.
-- The dense part should mainly reflect marked-to-market portfolio delta:
-  `(cash + holdings * price_t+1) - (cash + holdings * price_t)`, normalized by the initial `$500` and clipped into a small range.
-- The terminal part should reflect final portfolio value relative to the starting `$500`.
-- Invalid sells when holdings are zero should be penalized.
-- Invalid buys when cash is insufficient should be penalized.
-- Repeated pointless churn should carry a small penalty so the policy does not learn hyperactive flipping.
-- Holding through a good trend should be allowed to outperform constant trading.
-- Keep the total reward signal bounded and smooth enough that PPO can learn it.
-- You may tune magnitudes, but the structure should stay:
-  dense portfolio delta + invalid-action penalties + terminal account-value reward.
+- Dense shaping for tactical progress (objective advancement, effective damage,
+  survival, formation/positioning).
+- Penalties for friendly losses, invalid actions, or reckless behavior.
+- Terminal mission reward for win/lose outcomes and objective completion quality.
+- Keep rewards finite and approximately bounded for stable PPO training.
 
 Success signal:
 
-- `info["success"]` should become `True` when the final portfolio beats a clear baseline.
-- Good baselines are: finishing above the initial `$500`, or beating simple buy-and-hold on that episode.
-- A stronger version is to require the agent to beat both the starting bankroll and a simple scripted baseline.
+- `info["success"]` must be `True` only for successful mission completion.
+- Partial tactical progress may shape reward but should not count as success.
 
 What good behavior should look like:
 
-- buy early on trend-up series
-- rest or avoid traps on deceptive flat series
-- sell into boom-bust peaks
-- avoid panic trading on noise
-- preserve capital when no edge is visible
+- Allies use cover, avoid unnecessary exposure, and coordinate engagements.
+- Policy prioritizes objectives over random firefights.
+- Team survival and mission completion improve together over training.
 
-### 2. Text household task env
+## Rendering requirements (Simverse-style)
 
-Build a text-only home or lab simulator with grid-world navigation. The agent
-must learn disciplined timing and task order over a day of chores.
+Follow the Simverse renderer contract from `vendor/simverse/src/simverse/envs/README.md`:
 
-Fixed environment structure:
+- Do not build a standalone local Python render entrypoint for the candidate env.
+- Visualization must be browser-based via the shared `renderer/` workflow.
+- Write replay JSON per episode so the shared renderer backend/frontend can load it.
 
-- Home size is `10x10`.
-- The agent is a single navigator moving through the house.
-- One episode lasts `1000` steps.
-- The house represents `24` hours.
-- Roughly `41` steps correspond to `1` hour.
-- There are exactly `8` chores scheduled across the day.
-- Chores are fixed and ordered by hour.
+Replay API pattern to align with:
 
-World design:
+- `GET /<env>/snapshot`
+- `GET /<env>/replays`
+- `GET /<env>/replays/{replay_id}`
 
-- The house should have named functional regions such as kitchen, dining area, laundry area, living room, and utility area.
-- Each chore should be attached to a specific tile or small set of tiles.
-- The schedule should be fixed enough that the policy can learn routine and timing, not pure memorization of random task order.
-- The semantic story is text-only, but the transition logic still lives in a spatial simulator.
+When implementing replay output, keep schema stable across episodes and include
+enough frame metadata to drive grid playback (positions, health/status, actions,
+objective state, and terminal outcome).
 
-Required chores can include:
-
-- open fridge
-- cook breakfast
-- wash clothes
-- place plate on table
-- cook food
-- clean floor
-- turn off lights
-- turn on lights
-
-Action space:
-
-- `up`
-- `down`
-- `left`
-- `right`
-- `rest`
-- `start_task`
-
-Task execution rules:
-
-- A task only succeeds if the agent is standing on the correct grid location.
-- `start_task` should fail if used at the wrong location, wrong time, or wrong task order.
-- The task list is fixed per episode so the agent is learning discipline, not free-form exploration.
-- Each chore should have a target hour or narrow time window.
-- Doing the right task too early or too late should be worse than doing it on schedule.
-- Movement alone should not complete chores. The agent must explicitly trigger `start_task`.
-
-Observation design:
-
-- The simulator is text-only in meaning, but the evaluator still expects `C,H,W`.
-- Encode the house layout, agent position, task locations, current hour, active task index, and completion flags into channels.
-- Keep the text semantics explicit in the state variables and comments, even if the model consumes tensor channels.
-- The observation should let the policy infer where it is, what time it is, what chore is currently due, and what has already been completed.
-
-Reward structure:
-
-- The dominant reward should be disciplined schedule-following, not generic exploration.
-- Give a strong positive reward when the correct chore is started at the correct location and within its intended time window.
-- Give smaller shaping reward for arriving at the correct location shortly before the task is due.
-- Penalize attempting the wrong task, attempting a task out of order, or using `start_task` on the wrong tile.
-- Penalize being late relative to the task's scheduled hour.
-- Penalize excessive resting or wandering while a scheduled task is pending.
-- Add a mild per-step cost so the policy prefers efficient movement.
-- Add a strong terminal bonus if all `8` chores are completed correctly and in order within the day.
-- You may tune magnitudes, but the structure should stay:
-  on-time in-order completion reward + navigation shaping + timing/order penalties + terminal routine-completion bonus.
-
-Success signal:
-
-- `info["success"]` should be `True` only if the full daily schedule is completed correctly.
-- Partial completion should still help reward shaping, but should not count as full success.
-
-What good behavior should look like:
-
-- reaching the right room before the target hour
-- starting the correct task only when aligned with schedule and location
-- conserving movement instead of random wandering
-- finishing the full chore list cleanly and in order
 
 ## How to create ENV
 
 The candidate environment must obey these constraints:
 
 - `create_env(config, num_envs, device, dtype)` returns a `SimEnv`.
-- The environment is single-agent.
+- The environment supports multiple agents for combat missions.
 - The environment exposes a discrete `action_space`.
 - The environment exposes a 3D `observation_space.shape` in `C, H, W`.
 - `reset()` returns a dict that contains an `obs` tensor.
@@ -296,6 +204,7 @@ The candidate training file must obey these constraints:
 - It may define the policy architecture for this environment.
 - It may tune optimizer and PPO hyperparameters for this environment.
 - It may define task-level hyperparameter constants such as `max_steps` through `training_overrides()`.
+- It must enable W&B logging for training records (`--wandb` run convention).
 - It must not set the episode budget itself. The outer experiment loop controls `--train-episodes` and `--eval-episodes`.
 - It must not redefine the score.
 
@@ -359,7 +268,7 @@ LOOP FOREVER:
 2. Start with a small budget if this is a fresh run. If the accepted candidate is already strong at the current budget, ratchet upward and re-baseline the accepted commit first.
 3. Tune `candidate/env.py`, `candidate/train.py`, or both with one experimental idea.
 4. Commit the experiment if git is available.
-5. Run the experiment: `uv run python train.py --train-episodes <n> --eval-episodes <m> --description "<idea>" > run.log 2>&1`
+5. Run the experiment: `uv run python train.py --train-episodes <n> --eval-episodes <m> --device cuda --wandb --description "<idea>" > run.log 2>&1`
 6. Read out the results: `grep "^score:\|^mean_solve_rate:\|^mean_eval_return:\|^train_episodes:\|^eval_episodes:\|^max_steps:" run.log`
 7. If the grep output is empty, the run crashed. Read `tail -n 50 run.log`, decide whether the bug is easy to fix, and either retry or mark the idea as a crash.
 8. Confirm the row was written to `results.tsv`, then update its status to `keep` or `discard` if needed.
