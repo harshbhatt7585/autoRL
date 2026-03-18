@@ -103,6 +103,8 @@ Useful example ladder:
 - Change `seed_count` or `num_envs`.
 - Use a fake shortened `max_steps` that violates the chosen task brief.
 - Change the score definition.
+- Inflate reward magnitudes or tweak reward scaling only to make returns look larger without real behavior improvement.
+- Game evaluation by parameter hacks that change reported rewards instead of improving mission strategy, robustness, or success rate.
 
 **The goal is simple: get the highest score.** The budget is a search control knob, not a loophole. Spend as little budget as possible while ideas are weak, and only ratchet it upward when the accepted candidate has earned it. The only valid comparison is against the current accepted baseline at the same budget.
 
@@ -154,6 +156,7 @@ Reward structure:
 - Penalties for friendly losses, invalid actions, or reckless behavior.
 - Terminal mission reward for win/lose outcomes and objective completion quality.
 - Keep rewards finite and approximately bounded for stable PPO training.
+- Reward tuning must preserve meaning; do not simply increase coefficients to artificially boost score.
 
 Success signal:
 
